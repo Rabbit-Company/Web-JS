@@ -1,8 +1,29 @@
 import type { Context, Method, Middleware, MiddlewareRoute, Route } from "./types";
 
+class TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
+	children = new Map<string, TrieNode<T>>();
+	paramChild?: TrieNode<T>;
+	paramName?: string;
+	wildcardChild?: TrieNode<T>;
+	handlers?: Middleware<T>[];
+	method?: Method;
+
+	constructor(public segment?: string) {}
+}
+
 export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	private routes: Route<T>[] = [];
 	private middlewares: MiddlewareRoute<T>[] = [];
+
+	private roots: Record<Method, TrieNode<T>> = {
+		GET: new TrieNode(),
+		POST: new TrieNode(),
+		PUT: new TrieNode(),
+		DELETE: new TrieNode(),
+		PATCH: new TrieNode(),
+		OPTIONS: new TrieNode(),
+		HEAD: new TrieNode(),
+	};
 
 	constructor() {
 		this.handle = this.handle.bind(this);
@@ -13,63 +34,151 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			// global middleware
 			const [handler] = args;
 			this.middlewares.push({
-				match: () => ({ matched: true }),
+				match: () => ({ matched: true, params: {} }),
 				handler,
 			});
 		} else if (args.length === 2) {
 			// path-specific middleware
 			const [path, handler] = args;
-			const match = createPathMatcher(path);
+			const segments = path.split("/").filter(Boolean);
+			const match = createPathMatcherSegments(segments);
 			this.middlewares.push({
 				path,
-				match: (url: string) => match(url),
+				match: (url) => match(url.split("/").filter(Boolean)),
 				handler,
 			});
 		} else {
 			// method + path middleware
 			const [method, path, handler] = args;
-			const match = createPathMatcher(path);
+			const segments = path.split("/").filter(Boolean);
+			const match = createPathMatcherSegments(segments);
 			this.middlewares.push({
 				method,
 				path,
-				match: (url: string) => match(url),
+				match: (url) => match(url.split("/").filter(Boolean)),
 				handler,
 			});
 		}
 		return this;
 	}
 
-	private addRoute(method: Method, path: string, ...handlers: Middleware<T>[]): void {
-		const match = createPathMatcher(path);
-		this.routes.push({
-			method,
-			path,
-			match,
-			handlers,
-		});
+	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]) {
+		const segments = path.split("/").filter(Boolean);
+		let node = this.roots[method];
+
+		for (const segment of segments) {
+			if (segment === "*") {
+				if (!node.wildcardChild) {
+					node.wildcardChild = new TrieNode("*");
+				}
+				node = node.wildcardChild;
+				break; // wildcard is always last
+			} else if (segment.startsWith(":")) {
+				if (!node.paramChild) {
+					node.paramChild = new TrieNode(segment);
+					node.paramChild.paramName = segment.slice(1);
+				}
+				node = node.paramChild;
+			} else {
+				if (!node.children.has(segment)) {
+					node.children.set(segment, new TrieNode(segment));
+				}
+				node = node.children.get(segment)!;
+			}
+		}
+
+		node.handlers = handlers;
+		node.method = method;
+
+		const matcher = createPathMatcherSegments(segments);
+		this.routes.push({ method, path, handlers, match: (url) => matcher(url.split("/").filter(Boolean)) });
 	}
 
-	scope(prefix: string, fn: (app: Web<T>) => void): this {
-		const subApp = new Web<T>();
-		fn(subApp);
+	match(method: Method, path: string): { handlers?: Middleware<T>[]; params: Record<string, string> } | null {
+		const segments = path.split("/").filter(Boolean);
+		const params: Record<string, string> = {};
 
-		for (const mw of subApp.middlewares) {
-			const newPath = mw.path ? `${prefix}${mw.path}`.replace(/\/+/g, "/") : `${prefix.replace(/\/+$/, "")}/*`;
+		function search(node: TrieNode<T>, i: number): TrieNode<T> | null {
+			if (i === segments.length) {
+				if (node.handlers) return node;
+				if (node.wildcardChild && node.wildcardChild.handlers) return node.wildcardChild;
+				return null;
+			}
+
+			const segment = segments[i];
+			if (!segment) return null;
+
+			// Try static child first
+			if (node.children.has(segment)) {
+				const found = search(node.children.get(segment)!, i + 1);
+				if (found) return found;
+			}
+
+			// Try param child
+			if (node.paramChild) {
+				params[node.paramChild.paramName!] = decodeURIComponent(segment);
+				const found = search(node.paramChild, i + 1);
+				if (found) return found;
+				delete params[node.paramChild.paramName!]; // backtrack param
+			}
+
+			// Try wildcard child
+			if (node.wildcardChild && node.wildcardChild.handlers) {
+				return node.wildcardChild;
+			}
+
+			return null;
+		}
+
+		const root = this.roots[method];
+		const matchedNode = search(root, 0);
+
+		if (!matchedNode) return null;
+
+		return { handlers: matchedNode.handlers, params };
+	}
+
+	scope(path: string, callback: (scopeApp: this) => void): this {
+		const scopedApp = new (this.constructor as any)() as this;
+		callback(scopedApp);
+
+		const baseSegments = path.split("/").filter(Boolean);
+
+		for (const mw of scopedApp.middlewares) {
+			const originalMatch = mw.match;
+			const prefixedMatch = (url: string) => {
+				const urlSegments = url.split("/").filter(Boolean);
+
+				if (urlSegments.length < baseSegments.length) {
+					return { matched: false };
+				}
+
+				for (let i = 0; i < baseSegments.length; i++) {
+					if (baseSegments[i] !== urlSegments[i]) {
+						return { matched: false };
+					}
+				}
+
+				const subSegments = urlSegments.slice(baseSegments.length);
+				const subPath = "/" + subSegments.join("/");
+
+				return originalMatch(subPath);
+			};
 
 			this.middlewares.push({
 				...mw,
-				path: newPath,
-				match: createPathMatcher(newPath),
+				match: prefixedMatch,
+				path: path + (mw.path ?? ""),
 			});
 		}
 
-		this.route(prefix, subApp);
+		this.route(path, scopedApp);
 		return this;
 	}
 
-	route(prefix: string, subApp: Web<T>): this {
+	route(prefix: string, subApp: this): this {
 		for (const route of subApp.routes) {
-			const newPath = `${prefix}${route.path}`.replace(/\/+/g, "/");
+			const newPath = joinPaths(prefix, route.path);
 			this.addRoute(route.method, newPath, ...route.handlers);
 		}
 		return this;
@@ -89,99 +198,94 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		const url = new URL(req.url);
 		const method = req.method as Method;
 
-		for (const route of this.routes) {
-			if (route.method === method) {
-				const match = route.match(url.pathname);
-				if (match.matched) {
-					const ctx: Context<T> = {
-						req,
-						params: match.params,
-						state: {} as T,
-						async body<U>(): Promise<U> {
-							const type = req.headers.get("content-type") ?? "";
-							if (type.includes("application/json")) {
-								return req.json() as Promise<U>;
-							}
-							return {} as U;
-						},
-						json(data: unknown, status = 200): Response {
-							return new Response(JSON.stringify(data), {
-								status,
-								headers: { "Content-Type": "application/json" },
-							});
-						},
-						text(data: string | null | undefined, status = 200): Response {
-							return new Response(data, {
-								status,
-								headers: { "Content-Type": "text/plain" },
-							});
-						},
-						html(html: string | null | undefined, status = 200): Response {
-							return new Response(html, {
-								status,
-								headers: { "Content-Type": "text/html; charset=utf-8" },
-							});
-						},
-						query(): URLSearchParams {
-							return new URL(req.url).searchParams;
-						},
-					};
-
-					try {
-						const middlewares: Middleware<T>[] = this.middlewares
-							.filter((mw) => (!mw.method || mw.method === method) && mw.match(url.pathname).matched)
-							.map((mw) => mw.handler);
-
-						const handlers: Middleware<T>[] = route.handlers;
-
-						const stack: Middleware<T>[] = [...middlewares, ...handlers];
-
-						let i = -1;
-						let response: Response | null = null;
-
-						const runner = async (): Promise<void> => {
-							i++;
-							const fn = stack[i];
-							if (!fn) return;
-
-							const result = await Promise.resolve(
-								fn(ctx, async () => {
-									if (response) return;
-									await runner();
-								})
-							);
-
-							if (result instanceof Response && !response) {
-								response = result;
-							}
-						};
-
-						await runner();
-
-						if (response) return response;
-
-						return new Response("No response returned by handler", { status: 500 });
-					} catch (err) {
-						return new Response("Internal Server Error", { status: 500 });
-					}
-				}
-			}
+		const matched = this.match(method, url.pathname);
+		if (!matched) {
+			return new Response("Not Found", { status: 404 });
 		}
 
-		return new Response("Not Found", { status: 404 });
+		const { handlers, params } = matched;
+
+		const middlewares: Middleware<T>[] = this.middlewares
+			.filter((mw) => (!mw.method || mw.method === method) && mw.match(url.pathname).matched)
+			.map((mw) => mw.handler);
+
+		const ctx: Context<T> = {
+			req,
+			params,
+			state: {} as T,
+			async body<U>(): Promise<U> {
+				const type = req.headers.get("content-type") ?? "";
+				if (type.includes("application/json")) {
+					return req.json() as Promise<U>;
+				}
+				return {} as U;
+			},
+			json(data: unknown, status = 200): Response {
+				return new Response(JSON.stringify(data), {
+					status,
+					headers: { "Content-Type": "application/json" },
+				});
+			},
+			text(data: string | null | undefined, status = 200): Response {
+				return new Response(data, {
+					status,
+					headers: { "Content-Type": "text/plain" },
+				});
+			},
+			html(html: string | null | undefined, status = 200): Response {
+				return new Response(html, {
+					status,
+					headers: { "Content-Type": "text/html; charset=utf-8" },
+				});
+			},
+			query(): URLSearchParams {
+				return new URL(req.url).searchParams;
+			},
+		};
+
+		try {
+			const stack: Middleware<T>[] = [...middlewares, ...(handlers ?? [])];
+
+			let i = -1;
+			let response: Response | null = null;
+
+			const runner = async (): Promise<void> => {
+				i++;
+				const fn = stack[i];
+				if (!fn) return;
+
+				const result = await Promise.resolve(
+					fn(ctx, async () => {
+						if (response) return;
+						await runner();
+					})
+				);
+
+				if (result instanceof Response && !response) {
+					response = result;
+				}
+			};
+
+			await runner();
+
+			if (response) return response;
+
+			return new Response("No response returned by handler", { status: 500 });
+		} catch (err) {
+			return new Response("Internal Server Error", { status: 500 });
+		}
 	}
 }
 
-function createPathMatcher(path: string): (url: string) => { matched: boolean; params: Record<string, string> } {
-	const segments: string[] = path.split("/").filter(Boolean);
+function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) => { matched: boolean; params: Record<string, string> } {
+	return (urlSegments: string[]) => {
+		if (urlSegments.length < segments.length) return { matched: false, params: {} };
 
-	return (url: string) => {
-		const parts: string[] = url.split("/").filter(Boolean);
 		const params: Record<string, string> = {};
 
 		for (let i = 0; i < segments.length; i++) {
 			const seg = segments[i];
-			const part = parts[i];
+			const part = urlSegments[i];
 			if (seg === "*") return { matched: true, params };
 			if (seg?.startsWith(":")) {
 				if (!part) return { matched: false, params: {} };
@@ -191,7 +295,17 @@ function createPathMatcher(path: string): (url: string) => { matched: boolean; p
 			}
 		}
 
-		const matched = parts.length === segments.length;
+		const matched = urlSegments.length === segments.length;
 		return { matched, params: matched ? params : {} };
 	};
+}
+
+function joinPaths(...paths: string[]) {
+	return (
+		"/" +
+		paths
+			.map((p) => p.replace(/^\/|\/$/g, ""))
+			.filter(Boolean)
+			.join("/")
+	);
 }

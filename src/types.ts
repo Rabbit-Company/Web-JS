@@ -1,7 +1,15 @@
 export type Middleware<T extends Record<string, unknown> = Record<string, unknown>> = (ctx: Context<T>, next: Next) => Response | Promise<Response | void>;
 export type Next = () => Promise<Response | void>;
 
-export type Method = "GET" | "POST" | "PUT" | "DELETE";
+export interface TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
+	children: Map<string, TrieNode<T>>; // static children keyed by segment name
+	paramChild?: TrieNode<T>; // param child node (e.g. ":id")
+	paramName?: string; // name of param (without ':')
+	wildcardChild?: TrieNode<T>; // '*' wildcard child
+	handlers?: Middleware<T>[]; // handlers at this node if route ends here
+}
+
+export type Method = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD";
 
 export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>> = {
 	method?: Method;

@@ -1,11 +1,13 @@
 {
-  "name": "@rabbit-company/web",
-  "module": "src/index.ts",
-  "type": "module",
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+	"name": "@rabbit-company/web",
+	"module": "src/index.ts",
+	"type": "module",
+	"devDependencies": {
+		"@types/bun": "latest",
+		"hono": "^4.7.10"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {}
 }
