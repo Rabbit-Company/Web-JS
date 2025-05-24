@@ -40,6 +40,41 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
+	private extractPathname(url: string): string {
+		const queryStart = url.indexOf("?");
+		const hashStart = url.indexOf("#");
+
+		// Find where pathname ends (at ? or # or end of string)
+		let end = url.length;
+		if (queryStart !== -1) end = Math.min(end, queryStart);
+		if (hashStart !== -1) end = Math.min(end, hashStart);
+
+		// Find where pathname starts (after protocol://host)
+		const protocolEnd = url.indexOf("://");
+		if (protocolEnd === -1) {
+			// Relative URL, pathname starts immediately
+			return url.substring(0, end);
+		}
+
+		const hostStart = protocolEnd + 3;
+		const pathStart = url.indexOf("/", hostStart);
+
+		// If no path separator found, it's just the root
+		if (pathStart === -1) return "/";
+
+		return url.substring(pathStart, end);
+	}
+
+	private parseSearchParams(url: string): URLSearchParams {
+		const queryStart = url.indexOf("?");
+		if (queryStart === -1) return new URLSearchParams();
+
+		const hashStart = url.indexOf("#", queryStart);
+		const searchString = hashStart === -1 ? url.substring(queryStart + 1) : url.substring(queryStart + 1, hashStart);
+
+		return new URLSearchParams(searchString);
+	}
+
 	use(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): this {
 		this.clearMethodCache();
 
@@ -270,9 +305,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	async handle(req: Request): Promise<Response> {
-		const url = new URL(req.url);
 		const method = req.method as Method;
-		const path = url.pathname;
+		const path = this.extractPathname(req.url);
 
 		try {
 			// Match route first
@@ -346,7 +380,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 					});
 					return new Response(html, { status, headers: responseHeaders });
 				},
-				query: () => new URLSearchParams(url.search),
+				query: () => this.parseSearchParams(req.url),
 			};
 
 			const stack = [...middlewares, ...(matched.handlers ?? [])];
@@ -363,6 +397,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			return response ?? new Response("No response returned by handler", { status: 500 });
 		} catch (err) {
 			if (this.errorHandler) {
+				const url = new URL(req.url); // Only create URL object for error handling if needed
 				// We need to create a minimal context for error handling
 				const errorCtx: Context<T> = {
 					req,
