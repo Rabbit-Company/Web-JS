@@ -19,9 +19,9 @@ describe("Web Framework", () => {
 		const app = new Web();
 
 		let called = false;
-		app.use((_ctx) => {
+		app.use(async (_ctx, next) => {
 			called = true;
-			return undefined;
+			await next();
 		});
 
 		app.get("/test", (ctx) => ctx.text("Test"));
@@ -36,13 +36,14 @@ describe("Web Framework", () => {
 		app.get("/user/:id", (ctx) => ctx.text(`User ${ctx.params.id}`));
 
 		const res = await app.handle(mockRequest("/user/42"));
+		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("User 42");
 	});
 
 	it("should support multiple middlewares and short-circuiting", async () => {
 		const app = new Web();
 
-		app.use((ctx) => new Response("Intercepted", { status: 401 }));
+		app.use(() => new Response("Intercepted", { status: 401 }));
 
 		app.get("/private", (ctx) => ctx.text("Secret"));
 
@@ -56,6 +57,7 @@ describe("Web Framework", () => {
 		app.get("/assets/*", (ctx) => ctx.text("Asset route"));
 
 		const res = await app.handle(mockRequest("/assets/images/logo.png"));
+		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("Asset route");
 	});
 
@@ -64,6 +66,7 @@ describe("Web Framework", () => {
 		app.get("/data", (ctx) => ctx.json({ foo: "bar" }));
 
 		const res = await app.handle(mockRequest("/data"));
+		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("application/json");
 		expect(await res.json()).toEqual({ foo: "bar" });
 	});
@@ -73,6 +76,7 @@ describe("Web Framework", () => {
 		app.get("/page", (ctx) => ctx.html("<h1>Hello Page</h1>"));
 
 		const res = await app.handle(mockRequest("/page"));
+		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("text/html");
 		expect(await res.text()).toContain("<h1>Hello Page</h1>");
 	});
@@ -82,6 +86,7 @@ describe("Web Framework", () => {
 		app.get("/search", (ctx) => ctx.text(ctx.query().get("q") || ""));
 
 		const res = await app.handle(mockRequest("/search?q=test"));
+		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("test");
 	});
 
@@ -100,6 +105,7 @@ describe("Web Framework", () => {
 			})
 		);
 
+		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("Hello");
 	});
 
@@ -108,6 +114,7 @@ describe("Web Framework", () => {
 		app.get("/page", (ctx) => ctx.html("<h1>Hello</h1>"));
 
 		const res = await app.handle(mockRequest("/page"));
+		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("text/html");
 		expect(await res.text()).toBe("<h1>Hello</h1>");
 	});
@@ -120,9 +127,11 @@ describe("Web Framework", () => {
 		const app = new Web().route("/users", users);
 
 		const res1 = await app.handle(mockRequest("/users/123"));
+		expect(res1.status).toBe(200);
 		expect(await res1.text()).toBe("User 123");
 
 		const res2 = await app.handle(mockRequest("/users"));
+		expect(res2.status).toBe(200);
 		expect(await res2.text()).toBe("List users");
 	});
 
@@ -155,35 +164,36 @@ describe("Web Framework", () => {
 		it("should share state between middlewares and handlers", async () => {
 			const app = new Web();
 
-			app.use((ctx) => {
+			app.use(async (ctx, next) => {
 				ctx.state.user = { id: 123 };
-				return undefined;
+				await next();
 			});
 
-			app.get("/profile", (ctx) => {
-				return ctx.json({ userId: (ctx.state.user as { id: number }).id });
-			});
+			app.get("/profile", (ctx) => ctx.json({ userId: (ctx.state.user as { id: number }).id }));
 
 			const res = await app.handle(mockRequest("/profile"));
+			expect(res.status).toBe(200);
 			expect(await res.json()).toEqual({ userId: 123 });
 		});
 
 		it("should isolate state between requests", async () => {
 			const app = new Web<{ counter: number }>();
 
-			app.use((ctx) => {
+			app.use(async (ctx, next) => {
 				ctx.state.counter = (ctx.state.counter || 0) + 1;
-				return undefined;
+				await next();
 			});
 
 			app.get("/count", (ctx) => ctx.text(`Count: ${ctx.state.counter}`));
 
 			// First request
 			const res1 = await app.handle(mockRequest("/count"));
+			expect(res1.status).toBe(200);
 			expect(await res1.text()).toBe("Count: 1");
 
 			// Second request (should not share state)
 			const res2 = await app.handle(mockRequest("/count"));
+			expect(res2.status).toBe(200);
 			expect(await res2.text()).toBe("Count: 1");
 		});
 	});
@@ -193,16 +203,16 @@ describe("Web Framework", () => {
 			const app = new Web();
 
 			// Global middleware
-			app.use((ctx) => {
+			app.use(async (ctx, next) => {
 				ctx.state.global = true;
-				return undefined;
+				await next();
 			});
 
 			// Scoped middleware
 			app.scope("/admin", (admin) => {
-				admin.use((ctx) => {
+				admin.use(async (ctx, next) => {
 					ctx.state.admin = true;
-					return undefined;
+					await next();
 				});
 
 				admin.get("/dashboard", (ctx) => {
@@ -223,10 +233,12 @@ describe("Web Framework", () => {
 
 			// Test admin route
 			const adminRes = await app.handle(mockRequest("/admin/dashboard"));
+			expect(adminRes.status).toBe(200);
 			expect(await adminRes.json()).toEqual({ global: true, admin: true });
 
 			// Test non-admin route
 			const homeRes = await app.handle(mockRequest("/home"));
+			expect(homeRes.status).toBe(200);
 			expect(await homeRes.json()).toEqual({ global: true, admin: undefined });
 		});
 
@@ -234,15 +246,15 @@ describe("Web Framework", () => {
 			const app = new Web();
 
 			app.scope("/api", (api) => {
-				api.use((ctx) => {
+				api.use(async (ctx, next) => {
 					ctx.state.api = true;
-					return undefined;
+					await next();
 				});
 
 				api.scope("/v1", (v1) => {
-					v1.use((ctx) => {
+					v1.use(async (ctx, next) => {
 						ctx.state.v1 = true;
-						return undefined;
+						await next();
 					});
 
 					v1.get("/users", (ctx) => {
@@ -255,21 +267,22 @@ describe("Web Framework", () => {
 			});
 
 			const res = await app.handle(mockRequest("/api/v1/users"));
+			expect(res.status).toBe(200);
 			expect(await res.json()).toEqual({ api: true, v1: true });
 		});
 
 		it("should inherit parent middlewares in scopes", async () => {
 			const app = new Web();
 
-			app.use((ctx) => {
+			app.use(async (ctx, next) => {
 				ctx.state.root = true;
-				return undefined;
+				await next();
 			});
 
 			app.scope("/admin", (admin) => {
-				admin.use((ctx) => {
+				admin.use(async (ctx, next) => {
 					ctx.state.admin = true;
-					return undefined;
+					await next();
 				});
 
 				admin.get("/", (ctx) => {
@@ -281,6 +294,7 @@ describe("Web Framework", () => {
 			});
 
 			const res = await app.handle(mockRequest("/admin"));
+			expect(res.status).toBe(200);
 			expect(await res.json()).toEqual({ root: true, admin: true });
 		});
 	});
@@ -288,7 +302,7 @@ describe("Web Framework", () => {
 	describe("Edge Cases", () => {
 		it("should handle empty middleware chain", async () => {
 			const app = new Web();
-			app.get("/empty", () => undefined); // No response
+			app.get("/empty", async () => {}); // No response returned
 
 			const res = await app.handle(mockRequest("/empty"));
 			expect(res.status).toBe(500);
@@ -298,16 +312,15 @@ describe("Web Framework", () => {
 		it("should handle middleware that modifies context", async () => {
 			const app = new Web();
 
-			app.use((ctx) => {
+			app.use(async (ctx, next) => {
 				ctx.params.foo = "bar";
-				return undefined;
+				await next();
 			});
 
-			app.get("/modify", (ctx) => {
-				return ctx.text(ctx.params.foo);
-			});
+			app.get("/modify", (ctx) => ctx.text(ctx.params.foo));
 
 			const res = await app.handle(mockRequest("/modify"));
+			expect(res.status).toBe(200);
 			expect(await res.text()).toBe("bar");
 		});
 	});

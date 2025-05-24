@@ -1,7 +1,14 @@
-export type Handler<T extends Record<string, unknown> = Record<string, unknown>> = (ctx: Context<T>) => Response | Promise<Response> | undefined;
-export type Middleware<T extends Record<string, unknown> = Record<string, unknown>> = Handler<T>;
+export type Middleware<T extends Record<string, unknown> = Record<string, unknown>> = (ctx: Context<T>, next: Next) => Response | Promise<Response | void>;
+export type Next = () => Promise<Response | void>;
 
 export type Method = "GET" | "POST" | "PUT" | "DELETE";
+
+export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>> = {
+	method?: Method;
+	path?: string;
+	match: (url: string) => { matched: boolean };
+	handler: Middleware<T>;
+};
 
 export interface Context<T extends Record<string, unknown> = Record<string, unknown>> {
 	req: Request;
