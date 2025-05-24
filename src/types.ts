@@ -19,6 +19,7 @@ export type MatchResult = {
 export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>> = {
 	method?: Method;
 	path?: string;
+	pathPrefix?: string;
 	match: (url: string) => MatchResult;
 	handler: Middleware<T>;
 };

@@ -55,6 +55,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const match = createPathMatcherSegments(segments);
 			this.middlewares.push({
 				path,
+				pathPrefix: getStaticPrefix(path),
 				match: (url) => match(url.split("/").filter(Boolean)),
 				handler,
 			});
@@ -65,6 +66,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			this.middlewares.push({
 				method,
 				path,
+				pathPrefix: getStaticPrefix(path),
 				match: (url) => match(url.split("/").filter(Boolean)),
 				handler,
 			});
@@ -202,6 +204,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				...mw,
 				match: prefixedMatch,
 				path: path + (mw.path ?? ""),
+				pathPrefix: getStaticPrefix(path + (mw.path ?? "")),
 			});
 		}
 
@@ -283,8 +286,13 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const middlewares: Middleware<T>[] = [];
 			const params = matched.params;
 
-			// Process middlewares that match the path
+			// PERFORMANCE IMPROVEMENT: Pre-filter middlewares by path prefix before expensive matching
 			for (const mw of methodMiddlewares) {
+				// Skip expensive match() call if path doesn't start with middleware's static prefix
+				if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+					continue;
+				}
+
 				const matchResult = mw.match(path);
 				if (matchResult.matched) {
 					Object.assign(params, matchResult.params);
@@ -384,6 +392,22 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			return new Response("Internal Server Error", { status: 500 });
 		}
 	}
+}
+
+function getStaticPrefix(path: string): string {
+	if (!path || path === "/") return "/";
+
+	const segments = path.split("/").filter(Boolean);
+	const staticSegments: string[] = [];
+
+	for (const segment of segments) {
+		if (segment.startsWith(":") || segment === "*") {
+			break;
+		}
+		staticSegments.push(segment);
+	}
+
+	return staticSegments.length > 0 ? "/" + staticSegments.join("/") : "/";
 }
 
 function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) => MatchResult {
