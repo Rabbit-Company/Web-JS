@@ -11,10 +11,15 @@ export interface TrieNode<T extends Record<string, unknown> = Record<string, unk
 
 export type Method = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD";
 
+export type MatchResult = {
+	matched: boolean;
+	params: Record<string, string>;
+};
+
 export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>> = {
 	method?: Method;
 	path?: string;
-	match: (url: string) => { matched: boolean };
+	match: (url: string) => MatchResult;
 	handler: Middleware<T>;
 };
 
