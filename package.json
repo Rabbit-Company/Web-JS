@@ -1,9 +1,42 @@
 {
 	"name": "@rabbit-company/web",
-	"module": "src/index.ts",
+	"version": "1.0.0",
+	"description": "Simple web framework",
+	"main": "./module/web.js",
 	"type": "module",
+	"homepage": "https://github.com/Rabbit-Company/Web-JS",
+	"funding": "https://rabbit-company.com/donation",
+	"author": "Rabbit Company <info@rabbit-company.com>",
+	"license": "MIT",
+	"private": false,
+	"scripts": {
+		"build": "bun run build.ts"
+	},
+	"files": [
+		"module/web.js",
+		"module/web.d.ts"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Rabbit-Company/Web-JS.git"
+	},
+	"contributors": [
+		"Rabbit Company <info@rabbit-company.com> (https://github.com/Rabbit-Company)"
+	],
+	"bugs": {
+		"url": "https://github.com/Rabbit-Company/Web-JS/issues",
+		"email": "info@rabbit-company.com"
+	},
+	"keywords": [
+		"api",
+		"web",
+		"framework",
+		"security"
+	],
 	"devDependencies": {
 		"@types/bun": "latest",
+		"@rabbit-company/logger": "^5.4.0",
+		"bun-plugin-dts": "^0.3.0",
 		"hono": "^4.7.10"
 	},
 	"peerDependencies": {
