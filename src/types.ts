@@ -28,11 +28,15 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	res?: Response;
 	params: Record<string, string>;
 	state: T;
-	text: (body: string | null | undefined, status?: number) => Response;
-	json: (data: unknown, status?: number) => Response;
-	html: (html: string | null | undefined, status?: number) => Response;
+	text: (body: string | null | undefined, status?: number, headers?: Record<string, string>) => Response;
+	json: (data: unknown, status?: number, headers?: Record<string, string>) => Response;
+	html: (html: string | null | undefined, status?: number, headers?: Record<string, string>) => Response;
 	query: () => URLSearchParams;
 	body: <T>() => Promise<T>;
+	header: (name: string, value: string) => void;
+	set: <K extends keyof T>(key: K, value: T[K]) => void;
+	get: <K extends keyof T>(key: K) => T[K];
+	redirect: (url: string, status?: number) => Response;
 }
 
 export interface Route<T extends Record<string, unknown> = Record<string, unknown>> {

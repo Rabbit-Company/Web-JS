@@ -1,4 +1,4 @@
-import type { Context, MatchResult, Method, Middleware, MiddlewareRoute, Route } from "./types";
+import type { Context, MatchResult, Method, Middleware, MiddlewareRoute, Next, Route } from "./types";
 
 class TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
 	children = new Map<string, TrieNode<T>>();
@@ -31,6 +31,13 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 	private clearMethodCache() {
 		this.methodMiddlewareCache.clear();
+	}
+
+	private errorHandler?: (err: Error, ctx: Context<T>) => Response | Promise<Response>;
+
+	onError(handler: (err: Error, ctx: Context<T>) => Response | Promise<Response>): this {
+		this.errorHandler = handler;
+		return this;
 	}
 
 	use(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): this {
@@ -106,6 +113,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	match(method: Method, path: string): { handlers?: Middleware<T>[]; params: Record<string, string> } | null {
+		if (!this.roots[method as keyof typeof this.roots]) return null;
+
 		const segments = path.split("/").filter(Boolean);
 		const params: Record<string, string> = {};
 		let node = this.roots[method];
@@ -132,6 +141,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			// Try wildcard child
 			if (node.wildcardChild) {
+				params["*"] = segments.slice(i).join("/");
 				node = node.wildcardChild;
 				break;
 			}
@@ -152,7 +162,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			return this.methodMiddlewareCache.get(method)!;
 		}
 
-		const result = this.middlewares.filter((mw) => !mw.method || mw.method === method);
+		const result = this.middlewares.filter((mw) => {
+			if (mw.method && mw.method !== method) return false;
+			return true;
+		});
+
 		this.methodMiddlewareCache.set(method, result);
 		return result;
 	}
@@ -196,6 +210,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	route(prefix: string, subApp: this): this {
+		//this.middlewares.push(...subApp.middlewares);
 		for (const route of subApp.routes) {
 			const newPath = joinPaths(prefix, route.path);
 			this.addRoute(route.method, newPath, ...route.handlers);
@@ -213,60 +228,119 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
+	put(path: string, ...handlers: Middleware<T>[]): this {
+		this.addRoute("PUT", path, ...handlers);
+		return this;
+	}
+
+	delete(path: string, ...handlers: Middleware<T>[]): this {
+		this.addRoute("DELETE", path, ...handlers);
+		return this;
+	}
+
+	patch(path: string, ...handlers: Middleware<T>[]): this {
+		this.addRoute("PATCH", path, ...handlers);
+		return this;
+	}
+
+	options(path: string, ...handlers: Middleware<T>[]): this {
+		this.addRoute("OPTIONS", path, ...handlers);
+		return this;
+	}
+
+	head(path: string, ...handlers: Middleware<T>[]): this {
+		this.addRoute(
+			"HEAD",
+			path,
+			...handlers.map((handler) => async (ctx: Context<T>, next: Next) => {
+				const res = await handler(ctx, next);
+				if (res instanceof Response) {
+					return new Response(null, {
+						status: res.status,
+						headers: res.headers,
+					});
+				}
+				return res;
+			})
+		);
+		return this;
+	}
+
 	async handle(req: Request): Promise<Response> {
 		const url = new URL(req.url);
 		const method = req.method as Method;
 		const path = url.pathname;
 
-		// Match route first
-		const matched = this.match(method, path);
-		if (!matched) {
-			return new Response("Not Found", { status: 404 });
-		}
-
-		// Get relevant middlewares (pre-filtered by method)
-		const methodMiddlewares = this.getMethodMiddlewares(method);
-		const middlewares: Middleware<T>[] = [];
-		const params = matched.params;
-
-		// Process middlewares that match the path
-		for (const mw of methodMiddlewares) {
-			const matchResult = mw.match(path);
-			if (matchResult.matched) {
-				Object.assign(params, matchResult.params);
-				middlewares.push(mw.handler);
-			}
-		}
-
-		// Create optimized context
-		const ctx: Context<T> = {
-			req,
-			params,
-			state: {} as T,
-			body: async <U>(): Promise<U> => {
-				const type = req.headers.get("content-type") ?? "";
-				return type.includes("application/json") ? (req.json() as Promise<U>) : ({} as U);
-			},
-			json: (data: unknown, status = 200) =>
-				new Response(JSON.stringify(data), {
-					status,
-					headers: { "Content-Type": "application/json" },
-				}),
-			text: (data: string | null | undefined, status = 200) =>
-				new Response(data, {
-					status,
-					headers: { "Content-Type": "text/plain" },
-				}),
-			html: (html: string | null | undefined, status = 200) =>
-				new Response(html, {
-					status,
-					headers: { "Content-Type": "text/html; charset=utf-8" },
-				}),
-			query: () => url.searchParams,
-		};
-
-		// Execute middleware and handlers
 		try {
+			// Match route first
+			const matched = this.match(method, path);
+			if (!matched) {
+				return new Response("Not Found", { status: 404 });
+			}
+
+			// Get relevant middlewares (pre-filtered by method)
+			const methodMiddlewares = this.getMethodMiddlewares(method);
+			const middlewares: Middleware<T>[] = [];
+			const params = matched.params;
+
+			// Process middlewares that match the path
+			for (const mw of methodMiddlewares) {
+				const matchResult = mw.match(path);
+				if (matchResult.matched) {
+					Object.assign(params, matchResult.params);
+					middlewares.push(mw.handler);
+				}
+			}
+
+			// Create optimized context
+			const ctx: Context<T> = {
+				req,
+				params,
+				state: {} as T,
+				header: (name, value) => {},
+				set: (key, value) => {
+					ctx.state[key] = value;
+				},
+				get: (key) => ctx.state[key],
+				redirect: (url, status = 302) => {
+					return new Response(null, {
+						status,
+						headers: { Location: url },
+					});
+				},
+				body: async <U>(): Promise<U> => {
+					if (!req.body) return {} as U;
+					const type = req.headers.get("content-type") ?? "";
+					if (type.includes("application/x-www-form-urlencoded")) {
+						const formData = await req.formData();
+						return Object.fromEntries(formData.entries()) as U;
+					}
+					return type.includes("application/json") ? (req.json() as Promise<U>) : ({} as U);
+				},
+				json: (data: unknown, status = 200, headers?: Record<string, string>) => {
+					const responseHeaders = new Headers({
+						"Content-Type": "application/json",
+						...headers,
+					});
+					return new Response(JSON.stringify(data), { status, headers: responseHeaders });
+				},
+				text: (data: string | null | undefined, status = 200, headers?: Record<string, string>) => {
+					const responseHeaders = new Headers({
+						"Content-Type": "text/plain",
+						...headers,
+					});
+					return new Response(data, { status, headers: responseHeaders });
+				},
+				html: (html: string | null | undefined, status = 200, headers?: Record<string, string>) => {
+					const responseHeaders = new Headers({
+						"Content-Type": "text/html; charset=utf-8",
+						...headers,
+					});
+					return new Response(html, { status, headers: responseHeaders });
+				},
+				query: () => new URLSearchParams(url.search),
+			};
+
 			const stack = [...middlewares, ...(matched.handlers ?? [])];
 			let response: Response | undefined;
 
@@ -280,6 +354,33 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			return response ?? new Response("No response returned by handler", { status: 500 });
 		} catch (err) {
+			if (this.errorHandler) {
+				// We need to create a minimal context for error handling
+				const errorCtx: Context<T> = {
+					req,
+					params: {},
+					state: {} as T,
+					// Minimal implementations for error handling
+					text: (data, status = 500) => new Response(data, { status }),
+					json: (data, status = 500) =>
+						new Response(JSON.stringify(data), {
+							status,
+							headers: { "Content-Type": "application/json" },
+						}),
+					html: (html, status = 500) =>
+						new Response(html, {
+							status,
+							headers: { "Content-Type": "text/html" },
+						}),
+					query: () => url.searchParams,
+					body: async () => ({} as any),
+					header: () => {},
+					set: () => {},
+					get: () => undefined as any,
+					redirect: () => new Response(null, { status: 302 }),
+				};
+				return this.errorHandler(err as Error, errorCtx);
+			}
 			return new Response("Internal Server Error", { status: 500 });
 		}
 	}

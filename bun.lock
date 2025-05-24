@@ -3,11 +3,9 @@
   "workspaces": {
     "": {
       "name": "@rabbit-company/web",
-      "dependencies": {
-        "hono": "^4.7.10",
-      },
       "devDependencies": {
         "@types/bun": "latest",
+        "hono": "^4.7.10",
       },
       "peerDependencies": {
         "typescript": "^5",

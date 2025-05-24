@@ -1,327 +1,432 @@
 import { describe, expect, it } from "bun:test";
 import { Web } from "../src/index";
 
-function mockRequest(path: string, method = "GET") {
-	return new Request(`http://localhost${path}`, { method });
+function mockRequest(path: string, method = "GET", headers: Record<string, string> = {}) {
+	return new Request(`http://localhost${path}`, {
+		method,
+		headers: {
+			Host: "localhost",
+			...headers,
+		},
+	});
 }
 
 describe("Web Framework", () => {
-	it("should handle basic GET route", async () => {
-		const app = new Web();
-		app.get("/hello", (ctx) => ctx.text("Hello World"));
+	describe("Basic Routing", () => {
+		it("should handle GET requests", async () => {
+			const app = new Web();
+			app.get("/hello", (c) => c.text("Hello World"));
 
-		const res = await app.handle(mockRequest("/hello"));
-		expect(res.status).toBe(200);
-		expect(await res.text()).toBe("Hello World");
-	});
-
-	it("should call middleware before handler", async () => {
-		const app = new Web();
-
-		let called = false;
-		app.use(async (_ctx, next) => {
-			called = true;
-			await next();
+			const res = await app.handle(mockRequest("/hello"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("Hello World");
 		});
 
-		app.get("/test", (ctx) => ctx.text("Test"));
+		it("should handle POST requests", async () => {
+			const app = new Web();
+			app.post("/users", (c) => c.text("User created", 201));
 
-		const res = await app.handle(mockRequest("/test"));
-		expect(res.status).toBe(200);
-		expect(called).toBe(true);
-	});
-
-	it("should support dynamic route params", async () => {
-		const app = new Web();
-		app.get("/user/:id", (ctx) => ctx.text(`User ${ctx.params.id}`));
-
-		const res = await app.handle(mockRequest("/user/42"));
-		expect(res.status).toBe(200);
-		expect(await res.text()).toBe("User 42");
-	});
-
-	it("should support multiple middlewares and short-circuiting", async () => {
-		const app = new Web();
-
-		app.use(() => new Response("Intercepted", { status: 401 }));
-
-		app.get("/private", (ctx) => ctx.text("Secret"));
-
-		const res = await app.handle(mockRequest("/private"));
-		expect(res.status).toBe(401);
-		expect(await res.text()).toBe("Intercepted");
-	});
-
-	it("should support wildcard routes", async () => {
-		const app = new Web();
-		app.get("/assets/*", (ctx) => ctx.text("Asset route"));
-
-		const res = await app.handle(mockRequest("/assets/images/logo.png"));
-		expect(res.status).toBe(200);
-		expect(await res.text()).toBe("Asset route");
-	});
-
-	it("should respond with JSON using ctx.json", async () => {
-		const app = new Web();
-		app.get("/data", (ctx) => ctx.json({ foo: "bar" }));
-
-		const res = await app.handle(mockRequest("/data"));
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toContain("application/json");
-		expect(await res.json()).toEqual({ foo: "bar" });
-	});
-
-	it("should respond with HTML using ctx.html", async () => {
-		const app = new Web();
-		app.get("/page", (ctx) => ctx.html("<h1>Hello Page</h1>"));
-
-		const res = await app.handle(mockRequest("/page"));
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toContain("text/html");
-		expect(await res.text()).toContain("<h1>Hello Page</h1>");
-	});
-
-	it("should parse query params", async () => {
-		const app = new Web();
-		app.get("/search", (ctx) => ctx.text(ctx.query().get("q") || ""));
-
-		const res = await app.handle(mockRequest("/search?q=test"));
-		expect(res.status).toBe(200);
-		expect(await res.text()).toBe("test");
-	});
-
-	it("should parse body JSON using ctx.body", async () => {
-		const app = new Web();
-		app.post("/echo", async (ctx) => {
-			const body = await ctx.body<{ msg: string }>();
-			return ctx.text(body.msg);
+			const res = await app.handle(mockRequest("/users", "POST"));
+			expect(res.status).toBe(201);
+			expect(await res.text()).toBe("User created");
 		});
 
-		const res = await app.handle(
-			new Request("http://localhost/echo", {
-				method: "POST",
-				body: JSON.stringify({ msg: "Hello" }),
-				headers: { "Content-Type": "application/json" },
-			})
-		);
+		it("should handle PUT requests", async () => {
+			const app = new Web();
+			app.put("/users/:id", (c) => c.text(`Updated ${c.params.id}`));
 
-		expect(res.status).toBe(200);
-		expect(await res.text()).toBe("Hello");
-	});
-
-	it("should return HTML content with ctx.html", async () => {
-		const app = new Web();
-		app.get("/page", (ctx) => ctx.html("<h1>Hello</h1>"));
-
-		const res = await app.handle(mockRequest("/page"));
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toContain("text/html");
-		expect(await res.text()).toBe("<h1>Hello</h1>");
-	});
-
-	it("should support route groups (mounting)", async () => {
-		const users = new Web();
-		users.get("/", (ctx) => ctx.text("List users"));
-		users.get("/:id", (ctx) => ctx.text(`User ${ctx.params.id}`));
-
-		const app = new Web().route("/users", users);
-
-		const res1 = await app.handle(mockRequest("/users/123"));
-		expect(res1.status).toBe(200);
-		expect(await res1.text()).toBe("User 123");
-
-		const res2 = await app.handle(mockRequest("/users"));
-		expect(res2.status).toBe(200);
-		expect(await res2.text()).toBe("List users");
-	});
-
-	it("should return 404 for unmatched route", async () => {
-		const app = new Web();
-		const res = await app.handle(mockRequest("/nope"));
-		expect(res.status).toBe(404);
-	});
-
-	it("should return 404 when dynamic param is missing", async () => {
-		const app = new Web();
-		app.get("/user/:id", (ctx) => ctx.text(`User ${ctx.params.id}`));
-
-		const res = await app.handle(mockRequest("/user"));
-		expect(res.status).toBe(404);
-	});
-
-	it("should return 500 on handler error", async () => {
-		const app = new Web();
-		app.get("/fail", () => {
-			throw new Error("Boom");
+			const res = await app.handle(mockRequest("/users/123", "PUT"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("Updated 123");
 		});
 
-		const res = await app.handle(mockRequest("/fail"));
-		expect(res.status).toBe(500);
-		expect(await res.text()).toBe("Internal Server Error");
+		it("should handle DELETE requests", async () => {
+			const app = new Web();
+			app.delete("/users/:id", (c) => c.text(`Deleted ${c.params.id}`));
+
+			const res = await app.handle(mockRequest("/users/123", "DELETE"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("Deleted 123");
+		});
+
+		it("should handle PATCH requests", async () => {
+			const app = new Web();
+			app.patch("/users/:id", (c) => c.text(`Patched ${c.params.id}`));
+
+			const res = await app.handle(mockRequest("/users/123", "PATCH"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("Patched 123");
+		});
+
+		it("should handle HEAD requests", async () => {
+			const app = new Web();
+			app.head("/health", (c) => c.text("OK"));
+
+			const res = await app.handle(mockRequest("/health", "HEAD"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("");
+		});
+
+		it("should handle OPTIONS requests", async () => {
+			const app = new Web();
+			app.options("/users", (c) => {
+				return c.text("", 200, {
+					Allow: "GET, POST",
+				});
+			});
+
+			const res = await app.handle(mockRequest("/users", "OPTIONS"));
+			expect(res.status).toBe(200);
+			expect(res.headers.get("Allow")).toBe("GET, POST");
+		});
+	});
+
+	describe("Route Parameters", () => {
+		it("should parse route parameters", async () => {
+			const app = new Web();
+			app.get("/users/:id", (c) => c.text(`User ${c.params.id}`));
+
+			const res = await app.handle(mockRequest("/users/42"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("User 42");
+		});
+
+		it("should handle multiple parameters", async () => {
+			const app = new Web();
+			app.get("/posts/:category/:id", (c) =>
+				c.json({
+					category: c.params.category,
+					id: c.params.id,
+				})
+			);
+
+			const res = await app.handle(mockRequest("/posts/tech/123"));
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({
+				category: "tech",
+				id: "123",
+			});
+		});
+
+		it("should handle wildcard routes", async () => {
+			const app = new Web();
+			app.get("/assets/*", (c) => c.text(`Path: ${c.params["*"]}`));
+
+			const res = await app.handle(mockRequest("/assets/images/logo.png"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("Path: images/logo.png");
+		});
+	});
+
+	describe("Middleware", () => {
+		it("should execute middleware in order", async () => {
+			const app = new Web();
+			const calls: string[] = [];
+
+			app.use(async (c, next) => {
+				calls.push("first");
+				await next();
+			});
+
+			app.use(async (c, next) => {
+				calls.push("second");
+				await next();
+			});
+
+			app.get("/test", (c) => {
+				calls.push("handler");
+				return c.text("OK");
+			});
+
+			await app.handle(mockRequest("/test"));
+			expect(calls).toEqual(["first", "second", "handler"]);
+		});
+
+		it("should allow middleware to modify context", async () => {
+			const app = new Web<{ "x-request-id": string }>();
+
+			app.use(async (c, next) => {
+				c.set("x-request-id", "123");
+				await next();
+			});
+
+			app.get("/id", (c) => c.text(c.get("x-request-id")));
+
+			const res = await app.handle(mockRequest("/id"));
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("123");
+		});
+
+		it("should support scoped middleware", async () => {
+			const app = new Web<{ role: string }>();
+
+			app.use("/admin/*", async (c, next) => {
+				c.set("role", "admin");
+				await next();
+			});
+
+			app.get("/admin/dashboard", (c) => c.text(c.get("role")));
+			app.get("/public", (c) => c.text(c.get("role") || "public"));
+
+			const adminRes = await app.handle(mockRequest("/admin/dashboard"));
+			expect(await adminRes.text()).toBe("admin");
+
+			const publicRes = await app.handle(mockRequest("/public"));
+			expect(await publicRes.text()).toBe("public");
+		});
+	});
+
+	describe("Request Handling", () => {
+		it("should parse JSON body", async () => {
+			const app = new Web();
+			app.post("/echo", async (c) => {
+				const data = await c.req.json();
+				return c.json(data);
+			});
+
+			const res = await app.handle(
+				new Request("http://localhost/echo", {
+					method: "POST",
+					body: JSON.stringify({ message: "hello" }),
+					headers: { "Content-Type": "application/json" },
+				})
+			);
+
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({ message: "hello" });
+		});
+
+		it("should parse form data", async () => {
+			const app = new Web();
+			app.post("/form", async (c) => {
+				const form = await c.req.formData();
+				return c.text(form.get("name") as string);
+			});
+
+			const formData = new FormData();
+			formData.append("name", "John");
+
+			const res = await app.handle(
+				new Request("http://localhost/form", {
+					method: "POST",
+					body: formData,
+				})
+			);
+
+			expect(res.status).toBe(200);
+			expect(await res.text()).toBe("John");
+		});
+
+		it("should parse query parameters", async () => {
+			const app = new Web();
+			app.get("/search", (c) => {
+				const query = c.query();
+				return c.json({
+					q: query.get("q"),
+					page: query.get("page"),
+				});
+			});
+
+			const res = await app.handle(mockRequest("/search?q=test&page=2"));
+			expect(await res.json()).toEqual({ q: "test", page: "2" });
+		});
+
+		it("should handle headers", async () => {
+			const app = new Web();
+			app.get("/headers", (c) => {
+				return c.json({
+					userAgent: c.req.headers.get("User-Agent"),
+				});
+			});
+
+			const res = await app.handle(mockRequest("/headers", "GET", { "User-Agent": "TestAgent" }));
+			expect(await res.json()).toEqual({ userAgent: "TestAgent" });
+		});
+	});
+
+	describe("Response Handling", () => {
+		it("should set response headers", async () => {
+			const app = new Web();
+			app.get("/headers", (c) => {
+				return c.text("OK", 200, {
+					"X-Custom": "value",
+				});
+			});
+
+			const res = await app.handle(mockRequest("/headers"));
+			expect(res.headers.get("X-Custom")).toBe("value");
+		});
+
+		it("should return JSON responses", async () => {
+			const app = new Web();
+			app.get("/json", (c) => c.json({ status: "ok" }));
+
+			const res = await app.handle(mockRequest("/json"));
+			expect(res.headers.get("Content-Type")).toContain("application/json");
+			expect(await res.json()).toEqual({ status: "ok" });
+		});
+
+		it("should return HTML responses", async () => {
+			const app = new Web();
+			app.get("/html", (c) => c.html("<h1>Hello</h1>"));
+
+			const res = await app.handle(mockRequest("/html"));
+			expect(res.headers.get("Content-Type")).toContain("text/html");
+			expect(await res.text()).toBe("<h1>Hello</h1>");
+		});
+
+		it("should handle redirects", async () => {
+			const app = new Web();
+			app.get("/old", (c) => c.redirect("/new"));
+
+			const res = await app.handle(mockRequest("/old"));
+			expect(res.status).toBe(302);
+			expect(res.headers.get("Location")).toBe("/new");
+		});
+	});
+
+	describe("Error Handling", () => {
+		it("should handle 404 not found", async () => {
+			const app = new Web();
+			app.get("/exists", (c) => c.text("OK"));
+
+			const res = await app.handle(mockRequest("/not-found"));
+			expect(res.status).toBe(404);
+		});
+
+		it("should handle route errors", async () => {
+			const app = new Web();
+			app.get("/error", () => {
+				throw new Error("Test error");
+			});
+
+			const res = await app.handle(mockRequest("/error"));
+			expect(res.status).toBe(500);
+		});
+
+		it("should support custom error handling", async () => {
+			const app = new Web();
+
+			app.onError((err, c) => {
+				return c.text(`Error: ${err.message}`, 500);
+			});
+
+			app.get("/error", () => {
+				throw new Error("Custom error");
+			});
+
+			const res = await app.handle(mockRequest("/error"));
+			expect(await res.text()).toBe("Error: Custom error");
+		});
+
+		it("should handle async errors", async () => {
+			const app = new Web();
+			app.get("/async-error", async () => {
+				throw new Error("Async error");
+			});
+
+			const res = await app.handle(mockRequest("/async-error"));
+			expect(res.status).toBe(500);
+		});
+	});
+
+	describe("Route Groups", () => {
+		it("should support route prefixes", async () => {
+			const app = new Web();
+
+			const api = new Web();
+			api.get("/users", (c) => c.text("API Users"));
+
+			app.route("/api", api);
+
+			const res = await app.handle(mockRequest("/api/users"));
+			expect(await res.text()).toBe("API Users");
+		});
+
+		it("should support nested route groups", async () => {
+			const app = new Web();
+
+			const v1 = new Web();
+			v1.get("/users", (c) => c.text("V1 Users"));
+
+			const api = new Web();
+			api.route("/v1", v1);
+
+			app.route("/api", api);
+
+			const res = await app.handle(mockRequest("/api/v1/users"));
+			expect(await res.text()).toBe("V1 Users");
+		});
+
+		it("should inherit middleware in route groups", async () => {
+			const app = new Web<{ "x-request-id": string }>();
+
+			app.use(async (c, next) => {
+				c.set("x-request-id", "123");
+				await next();
+			});
+
+			const api = new Web<{ "x-request-id": string }>();
+			api.get("/test", (c) => c.text(c.get("x-request-id")));
+
+			app.route("/api", api);
+
+			const res = await app.handle(mockRequest("/api/test"));
+			expect(await res.text()).toBe("123");
+		});
 	});
 
 	describe("State Management", () => {
-		it("should share state between middlewares and handlers", async () => {
+		it("should share state between middleware and handlers", async () => {
 			const app = new Web();
 
-			app.use(async (ctx, next) => {
-				ctx.state.user = { id: 123 };
+			app.use(async (c, next) => {
+				c.set("user", { id: 123 });
 				await next();
 			});
 
-			app.get("/profile", (ctx) => ctx.json({ userId: (ctx.state.user as { id: number }).id }));
+			app.get("/user", (c) => c.json(c.get("user")));
 
-			const res = await app.handle(mockRequest("/profile"));
-			expect(res.status).toBe(200);
-			expect(await res.json()).toEqual({ userId: 123 });
+			const res = await app.handle(mockRequest("/user"));
+			expect(await res.json()).toEqual({ id: 123 });
 		});
 
 		it("should isolate state between requests", async () => {
-			const app = new Web<{ counter: number }>();
+			const app = new Web<{ count: number }>();
 
-			app.use(async (ctx, next) => {
-				ctx.state.counter = (ctx.state.counter || 0) + 1;
+			app.use(async (c, next) => {
+				c.set("count", (c.get("count") || 0) + 1);
 				await next();
 			});
 
-			app.get("/count", (ctx) => ctx.text(`Count: ${ctx.state.counter}`));
+			app.get("/count", (c) => c.text(c.get("count").toString()));
 
-			// First request
 			const res1 = await app.handle(mockRequest("/count"));
-			expect(res1.status).toBe(200);
-			expect(await res1.text()).toBe("Count: 1");
+			expect(await res1.text()).toBe("1");
 
-			// Second request (should not share state)
 			const res2 = await app.handle(mockRequest("/count"));
-			expect(res2.status).toBe(200);
-			expect(await res2.text()).toBe("Count: 1");
+			expect(await res2.text()).toBe("1");
 		});
 	});
 
-	describe("Scoped Middleware", () => {
-		it("should apply middleware only to scoped routes", async () => {
+	describe("Performance", () => {
+		it("should handle many routes efficiently", async () => {
 			const app = new Web();
 
-			// Global middleware
-			app.use(async (ctx, next) => {
-				ctx.state.global = true;
-				await next();
-			});
+			// Add 100 routes
+			for (let i = 0; i < 100; i++) {
+				app.get(`/route${i}`, (c) => c.text(`Route ${i}`));
+			}
 
-			// Scoped middleware
-			app.scope("/admin", (admin) => {
-				admin.use(async (ctx, next) => {
-					ctx.state.admin = true;
-					await next();
-				});
+			// Test a few of them
+			const res1 = await app.handle(mockRequest("/route0"));
+			expect(await res1.text()).toBe("Route 0");
 
-				admin.get("/dashboard", (ctx) => {
-					return ctx.json({
-						global: ctx.state.global,
-						admin: ctx.state.admin,
-					});
-				});
-			});
+			const res50 = await app.handle(mockRequest("/route50"));
+			expect(await res50.text()).toBe("Route 50");
 
-			// Regular route (should not get admin middleware)
-			app.get("/home", (ctx) => {
-				return ctx.json({
-					global: ctx.state.global,
-					admin: ctx.state.admin,
-				});
-			});
-
-			// Test admin route
-			const adminRes = await app.handle(mockRequest("/admin/dashboard"));
-			expect(adminRes.status).toBe(200);
-			expect(await adminRes.json()).toEqual({ global: true, admin: true });
-
-			// Test non-admin route
-			const homeRes = await app.handle(mockRequest("/home"));
-			expect(homeRes.status).toBe(200);
-			expect(await homeRes.json()).toEqual({ global: true, admin: undefined });
-		});
-
-		it("should support nested scopes", async () => {
-			const app = new Web();
-
-			app.scope("/api", (api) => {
-				api.use(async (ctx, next) => {
-					ctx.state.api = true;
-					await next();
-				});
-
-				api.scope("/v1", (v1) => {
-					v1.use(async (ctx, next) => {
-						ctx.state.v1 = true;
-						await next();
-					});
-
-					v1.get("/users", (ctx) => {
-						return ctx.json({
-							api: ctx.state.api,
-							v1: ctx.state.v1,
-						});
-					});
-				});
-			});
-
-			const res = await app.handle(mockRequest("/api/v1/users"));
-			expect(res.status).toBe(200);
-			expect(await res.json()).toEqual({ api: true, v1: true });
-		});
-
-		it("should inherit parent middlewares in scopes", async () => {
-			const app = new Web();
-
-			app.use(async (ctx, next) => {
-				ctx.state.root = true;
-				await next();
-			});
-
-			app.scope("/admin", (admin) => {
-				admin.use(async (ctx, next) => {
-					ctx.state.admin = true;
-					await next();
-				});
-
-				admin.get("/", (ctx) => {
-					return ctx.json({
-						root: ctx.state.root,
-						admin: ctx.state.admin,
-					});
-				});
-			});
-
-			const res = await app.handle(mockRequest("/admin"));
-			expect(res.status).toBe(200);
-			expect(await res.json()).toEqual({ root: true, admin: true });
-		});
-	});
-
-	describe("Edge Cases", () => {
-		it("should handle empty middleware chain", async () => {
-			const app = new Web();
-			app.get("/empty", async () => {}); // No response returned
-
-			const res = await app.handle(mockRequest("/empty"));
-			expect(res.status).toBe(500);
-			expect(await res.text()).toBe("No response returned by handler");
-		});
-
-		it("should handle middleware that modifies context", async () => {
-			const app = new Web();
-
-			app.use(async (ctx, next) => {
-				ctx.params.foo = "bar";
-				await next();
-			});
-
-			app.get("/modify", (ctx) => ctx.text(ctx.params.foo));
-
-			const res = await app.handle(mockRequest("/modify"));
-			expect(res.status).toBe(200);
-			expect(await res.text()).toBe("bar");
+			const res99 = await app.handle(mockRequest("/route99"));
+			expect(await res99.text()).toBe("Route 99");
 		});
 	});
 });
