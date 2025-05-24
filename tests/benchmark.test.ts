@@ -123,12 +123,12 @@ describe("Comprehensive Framework Benchmarks", () => {
 			const requests = [mockRequest("/protected/resource"), mockRequest("/api/data"), mockRequest("/public/info")];
 
 			// Setup Web Framework with middleware
-			const webApp = new Web();
+			const webApp = new Web<{ requestId: string; authenticated: boolean; apiVersion: string }>();
 			setupMiddlewareRoutes(webApp);
 			const webResult = await runBenchmark("Web Framework (Middleware)", (req) => webApp.handle(req), requests);
 
 			// Setup Hono Framework with middleware
-			const honoApp = new Hono();
+			const honoApp = new Hono<{ Variables: { requestId: string; authenticated: boolean; apiVersion: string } }>();
 			setupMiddlewareRoutes(honoApp);
 			const honoResult = await runBenchmark("Hono Framework (Middleware)", async (req) => honoApp.fetch(req), requests);
 
@@ -270,40 +270,45 @@ function setupComplexRoutes(app: Web | Hono | Elysia) {
 	}
 }
 
-function setupMiddlewareRoutes(app: Web | Hono | Elysia) {
+function setupMiddlewareRoutes(
+	app:
+		| Web<{ requestId: string; authenticated: boolean; apiVersion: string }>
+		| Hono<{ Variables: { requestId: string; authenticated: boolean; apiVersion: string } }>
+		| Elysia
+) {
 	if (app instanceof Web) {
 		// Global middleware
-		app.use((ctx: any, next: any) => {
-			ctx.set("requestId", Math.random().toString(36).substr(2, 9));
+		app.use((ctx, next) => {
+			ctx.set("requestId", crypto.randomUUID());
 			return next();
 		});
 
 		// Path-specific middleware
-		app.use("/protected/*", (ctx: any, next: any) => {
+		app.use("/protected/*", (ctx, next) => {
 			ctx.set("authenticated", true);
 			return next();
 		});
 
-		app.use("/api/*", (ctx: any, next: any) => {
+		app.use("/api/*", (ctx, next) => {
 			ctx.set("apiVersion", "v1");
 			return next();
 		});
 
-		app.get("/protected/resource", (ctx: any) =>
+		app.get("/protected/resource", (ctx) =>
 			ctx.json({
 				data: "protected",
 				requestId: ctx.get("requestId"),
 				authenticated: ctx.get("authenticated"),
 			})
 		);
-		app.get("/api/data", (ctx: any) =>
+		app.get("/api/data", (ctx) =>
 			ctx.json({
 				data: "api",
 				requestId: ctx.get("requestId"),
 				version: ctx.get("apiVersion"),
 			})
 		);
-		app.get("/public/info", (ctx: any) =>
+		app.get("/public/info", (ctx) =>
 			ctx.json({
 				data: "public",
 				requestId: ctx.get("requestId"),
@@ -311,59 +316,66 @@ function setupMiddlewareRoutes(app: Web | Hono | Elysia) {
 		);
 	} else if (app instanceof Hono) {
 		// Global middleware
-		app.use("*", (c: any, next: any) => {
-			c.set("requestId", Math.random().toString(36).substr(2, 9));
+		app.use((ctx, next) => {
+			ctx.set("requestId", crypto.randomUUID());
 			return next();
 		});
 
 		// Path-specific middleware
-		app.use("/protected/*", (c: any, next: any) => {
-			c.set("authenticated", true);
+		app.use("/protected/*", (ctx, next) => {
+			ctx.set("authenticated", true);
 			return next();
 		});
 
-		app.use("/api/*", (c: any, next: any) => {
-			c.set("apiVersion", "v1");
+		app.use("/api/*", (ctx, next) => {
+			ctx.set("apiVersion", "v1");
 			return next();
 		});
 
-		app.get("/protected/resource", (c: any) =>
-			c.json({
+		app.get("/protected/resource", (ctx) =>
+			ctx.json({
 				data: "protected",
-				requestId: c.get("requestId"),
-				authenticated: c.get("authenticated"),
+				requestId: ctx.get("requestId"),
+				authenticated: ctx.get("authenticated"),
 			})
 		);
-		app.get("/api/data", (c: any) =>
-			c.json({
+		app.get("/api/data", (ctx) =>
+			ctx.json({
 				data: "api",
-				requestId: c.get("requestId"),
-				version: c.get("apiVersion"),
+				requestId: ctx.get("requestId"),
+				version: ctx.get("apiVersion"),
 			})
 		);
-		app.get("/public/info", (c: any) =>
-			c.json({
+		app.get("/public/info", (ctx) =>
+			ctx.json({
 				data: "public",
-				requestId: c.get("requestId"),
+				requestId: ctx.get("requestId"),
 			})
 		);
 	} else if (app instanceof Elysia) {
-		// Global middleware
-		app.onRequest(({ set }) => {
-			set.headers = { "x-request-id": Math.random().toString(36).substr(2, 9) };
-		});
-
-		app.get("/protected/resource", () => ({
-			data: "protected",
-			authenticated: true,
-		}));
-		app.get("/api/data", () => ({
-			data: "api",
-			version: "v1",
-		}));
-		app.get("/public/info", () => ({
-			data: "public",
-		}));
+		app
+			.state("requestId", "")
+			.state("authenticated", true)
+			.state("apiVersion", "")
+			.onRequest(({ store }: { store: { requestId: string; authenticated: boolean; apiVersion: string } }) => {
+				store.requestId = crypto.randomUUID();
+				store.authenticated = true;
+				store.apiVersion = "v1";
+			})
+			.get("/protected/resource", ({ store }) => ({
+				data: "protected",
+				requestId: store.requestId,
+				authenticated: store.authenticated,
+			}))
+			.get("/api/data", ({ store }) => ({
+				data: "api",
+				requestId: store.requestId,
+				version: store.apiVersion,
+			}))
+			.get("/public/info", ({ store }) => ({
+				data: "public",
+				requestId: store.requestId,
+			}));
 	}
 }
 
@@ -429,35 +441,37 @@ function setupParamRoutes(app: Web | Hono | Elysia) {
 }
 
 function setupBodyParsingRoutes(app: Web | Hono | Elysia) {
+	const id = crypto.randomUUID();
+
 	if (app instanceof Web) {
 		app.post("/api/users", async (ctx) => {
 			const body = await ctx.body();
-			return ctx.json({ created: body, id: Math.random() });
+			return ctx.json({ created: body, id });
 		});
 		app.post("/api/products", async (ctx) => {
 			const body = await ctx.body();
-			return ctx.json({ created: body, id: Math.random() });
+			return ctx.json({ created: body, id });
 		});
 		app.post("/api/orders", async (ctx) => {
 			const body = await ctx.body();
-			return ctx.json({ created: body, id: Math.random() });
+			return ctx.json({ created: body, id });
 		});
 	} else if (app instanceof Hono) {
 		app.post("/api/users", async (c) => {
 			const body = await c.req.json();
-			return c.json({ created: body, id: Math.random() });
+			return c.json({ created: body, id });
 		});
 		app.post("/api/products", async (c) => {
 			const body = await c.req.json();
-			return c.json({ created: body, id: Math.random() });
+			return c.json({ created: body, id });
 		});
 		app.post("/api/orders", async (c) => {
 			const body = await c.req.json();
-			return c.json({ created: body, id: Math.random() });
+			return c.json({ created: body, id });
 		});
 	} else if (app instanceof Elysia) {
-		app.post("/api/users", ({ body }: any) => ({ created: body, id: Math.random() }));
-		app.post("/api/products", ({ body }: any) => ({ created: body, id: Math.random() }));
-		app.post("/api/orders", ({ body }: any) => ({ created: body, id: Math.random() }));
+		app.post("/api/users", ({ body }: any) => ({ created: body, id }));
+		app.post("/api/products", ({ body }: any) => ({ created: body, id }));
+		app.post("/api/orders", ({ body }: any) => ({ created: body, id }));
 	}
 }
