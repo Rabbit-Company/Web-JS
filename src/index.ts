@@ -4,6 +4,10 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	private routes: Route<T>[] = [];
 	private middlewares: Middleware<T>[] = [];
 
+	constructor() {
+		this.handle = this.handle.bind(this);
+	}
+
 	use(mw: Middleware<T>): this {
 		this.middlewares.push(mw);
 		return this;
