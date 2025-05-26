@@ -277,19 +277,23 @@ class Web {
     return this;
   }
   createContext(req, params, parsedUrl) {
+    const responseHeaders = new Headers;
     const ctx = {
       req,
       params,
       state: {},
-      header: (name, value) => {},
+      header: (name, value) => {
+        responseHeaders.set(name, value);
+      },
       set: (key, value) => {
         ctx.state[key] = value;
       },
       get: (key) => ctx.state[key],
       redirect: (url, status = 302) => {
+        responseHeaders.set("Location", url);
         return new Response(null, {
           status,
-          headers: { Location: url }
+          headers: responseHeaders
         });
       },
       body: async () => {
@@ -303,25 +307,43 @@ class Web {
         return type.includes("application/json") ? req.json() : {};
       },
       json: (data, status = 200, headers) => {
-        const responseHeaders = new Headers({
-          "Content-Type": "application/json",
-          ...headers
+        const allHeaders = new Headers(responseHeaders);
+        allHeaders.set("Content-Type", "application/json");
+        if (headers) {
+          Object.entries(headers).forEach(([name, value]) => {
+            allHeaders.set(name, value);
+          });
+        }
+        return new Response(JSON.stringify(data), {
+          status,
+          headers: allHeaders
         });
-        return new Response(JSON.stringify(data), { status, headers: responseHeaders });
       },
       text: (data, status = 200, headers) => {
-        const responseHeaders = new Headers({
-          "Content-Type": "text/plain",
-          ...headers
+        const allHeaders = new Headers(responseHeaders);
+        allHeaders.set("Content-Type", "text/plain");
+        if (headers) {
+          Object.entries(headers).forEach(([name, value]) => {
+            allHeaders.set(name, value);
+          });
+        }
+        return new Response(data, {
+          status,
+          headers: allHeaders
         });
-        return new Response(data, { status, headers: responseHeaders });
       },
       html: (html, status = 200, headers) => {
-        const responseHeaders = new Headers({
-          "Content-Type": "text/html; charset=utf-8",
-          ...headers
+        const allHeaders = new Headers(responseHeaders);
+        allHeaders.set("Content-Type", "text/html; charset=utf-8");
+        if (headers) {
+          Object.entries(headers).forEach(([name, value]) => {
+            allHeaders.set(name, value);
+          });
+        }
+        return new Response(html, {
+          status,
+          headers: allHeaders
         });
-        return new Response(html, { status, headers: responseHeaders });
       },
       query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS
     };

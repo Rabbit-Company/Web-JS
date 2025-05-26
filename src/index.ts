@@ -709,19 +709,25 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @private
 	 */
 	private createContext(req: Request, params: Record<string, string>, parsedUrl: { pathname: string; searchParams?: URLSearchParams }): Context<T> {
+		// Initialize response headers storage
+		const responseHeaders = new Headers();
+
 		const ctx: Context<T> = {
 			req,
 			params,
 			state: {} as T,
-			header: (name: string, value: string) => {},
+			header: (name: string, value: string) => {
+				responseHeaders.set(name, value);
+			},
 			set: (key: keyof T, value: T[keyof T]) => {
 				ctx.state[key] = value;
 			},
 			get: (key) => ctx.state[key],
 			redirect: (url: string, status = 302) => {
+				responseHeaders.set("Location", url);
 				return new Response(null, {
 					status,
-					headers: { Location: url },
+					headers: responseHeaders,
 				});
 			},
 			body: async <U>(): Promise<U> => {
@@ -734,25 +740,43 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				return type.includes("application/json") ? (req.json() as Promise<U>) : ({} as U);
 			},
 			json: (data: unknown, status = 200, headers?: Record<string, string>) => {
-				const responseHeaders = new Headers({
-					"Content-Type": "application/json",
-					...headers,
+				const allHeaders = new Headers(responseHeaders);
+				allHeaders.set("Content-Type", "application/json");
+				if (headers) {
+					Object.entries(headers).forEach(([name, value]) => {
+						allHeaders.set(name, value);
+					});
+				}
+				return new Response(JSON.stringify(data), {
+					status,
+					headers: allHeaders,
 				});
-				return new Response(JSON.stringify(data), { status, headers: responseHeaders });
 			},
 			text: (data: string | null | undefined, status = 200, headers?: Record<string, string>) => {
-				const responseHeaders = new Headers({
-					"Content-Type": "text/plain",
-					...headers,
+				const allHeaders = new Headers(responseHeaders);
+				allHeaders.set("Content-Type", "text/plain");
+				if (headers) {
+					Object.entries(headers).forEach(([name, value]) => {
+						allHeaders.set(name, value);
+					});
+				}
+				return new Response(data, {
+					status,
+					headers: allHeaders,
 				});
-				return new Response(data, { status, headers: responseHeaders });
 			},
 			html: (html: string | null | undefined, status = 200, headers?: Record<string, string>) => {
-				const responseHeaders = new Headers({
-					"Content-Type": "text/html; charset=utf-8",
-					...headers,
+				const allHeaders = new Headers(responseHeaders);
+				allHeaders.set("Content-Type", "text/html; charset=utf-8");
+				if (headers) {
+					Object.entries(headers).forEach(([name, value]) => {
+						allHeaders.set(name, value);
+					});
+				}
+				return new Response(html, {
+					status,
+					headers: allHeaders,
 				});
-				return new Response(html, { status, headers: responseHeaders });
 			},
 			query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
 		};

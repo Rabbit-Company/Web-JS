@@ -257,7 +257,7 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	 */
 	body: <T>() => Promise<T>;
 	/**
-	 * Sets a response header (currently not implemented in the provided code).
+	 * Sets a response header.
 	 *
 	 * @param name - Header name
 	 * @param value - Header value
