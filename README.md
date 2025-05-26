@@ -158,7 +158,7 @@ app.get("/danger", async (ctx) => {
 
 ### ⚡ Performance
 
-Benchmarks against popular frameworks (requests/sec):
+Benchmarks against popular frameworks:
 
 ```js
 bun test v1.2.14 (6a363a38)
@@ -189,6 +189,8 @@ Elysia Framework (JSON Body): 145.70ms for 50000 requests (343,167 req/s) (check
  0 fail
 Ran 5 tests across 1 files. [27.55s]
 ```
+
+_Tested on Framework 16 laptop (Ryzen 7040 Series)_
 
 ### 📄 License
 
