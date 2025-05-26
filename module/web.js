@@ -10,11 +10,15 @@ class TrieNode {
     this.segment = segment;
   }
 }
+var EMPTY_PARAMS = Object.freeze({});
+var EMPTY_SEARCH_PARAMS = new URLSearchParams;
 
 class Web {
   routes = [];
   middlewares = [];
   methodMiddlewareCache = new Map;
+  urlCache = new Map;
+  segmentCache = new Map;
   roots = {
     GET: new TrieNode,
     POST: new TrieNode,
@@ -27,16 +31,59 @@ class Web {
   constructor() {
     this.handle = this.handle.bind(this);
   }
-  clearMethodCache() {
+  clearCaches() {
     this.methodMiddlewareCache.clear();
+    this.urlCache.clear();
+    this.segmentCache.clear();
   }
   errorHandler;
   onError(handler) {
     this.errorHandler = handler;
     return this;
   }
+  getPathSegments(path) {
+    if (this.segmentCache.has(path)) {
+      return this.segmentCache.get(path);
+    }
+    const segments = path.split("/").filter(Boolean);
+    if (this.segmentCache.size < 500) {
+      this.segmentCache.set(path, segments);
+    }
+    return segments;
+  }
+  parseUrl(url) {
+    if (this.urlCache.has(url)) {
+      return this.urlCache.get(url);
+    }
+    const queryStart = url.indexOf("?");
+    const hashStart = url.indexOf("#");
+    let end = url.length;
+    if (queryStart !== -1)
+      end = Math.min(end, queryStart);
+    if (hashStart !== -1)
+      end = Math.min(end, hashStart);
+    const protocolEnd = url.indexOf("://");
+    let pathname;
+    if (protocolEnd === -1) {
+      pathname = url.substring(0, end);
+    } else {
+      const hostStart = protocolEnd + 3;
+      const pathStart = url.indexOf("/", hostStart);
+      pathname = pathStart === -1 ? "/" : url.substring(pathStart, end);
+    }
+    let searchParams;
+    if (queryStart !== -1) {
+      const searchString = hashStart === -1 ? url.substring(queryStart + 1) : url.substring(queryStart + 1, hashStart);
+      searchParams = new URLSearchParams(searchString);
+    }
+    const result = { pathname, searchParams };
+    if (this.urlCache.size < 1000) {
+      this.urlCache.set(url, result);
+    }
+    return result;
+  }
   use(...args) {
-    this.clearMethodCache();
+    this.clearCaches();
     if (args.length === 1) {
       const [handler] = args;
       this.middlewares.push({
@@ -45,28 +92,31 @@ class Web {
       });
     } else if (args.length === 2) {
       const [path, handler] = args;
-      const segments = path.split("/").filter(Boolean);
+      const segments = this.getPathSegments(path);
       const match = createPathMatcherSegments(segments);
       this.middlewares.push({
         path,
-        match: (url) => match(url.split("/").filter(Boolean)),
+        pathPrefix: getStaticPrefix(path),
+        match: (url) => match(this.getPathSegments(url)),
         handler
       });
     } else {
       const [method, path, handler] = args;
-      const segments = path.split("/").filter(Boolean);
+      const segments = this.getPathSegments(path);
       const match = createPathMatcherSegments(segments);
       this.middlewares.push({
         method,
         path,
-        match: (url) => match(url.split("/").filter(Boolean)),
+        pathPrefix: getStaticPrefix(path),
+        match: (url) => match(this.getPathSegments(url)),
         handler
       });
     }
     return this;
   }
   addRoute(method, path, ...handlers) {
-    const segments = path.split("/").filter(Boolean);
+    this.clearCaches();
+    const segments = this.getPathSegments(path);
     let node = this.roots[method];
     for (const segment of segments) {
       if (segment === "*") {
@@ -98,15 +148,19 @@ class Web {
       method,
       path,
       handlers,
-      match: (url) => matcher(url.split("/").filter(Boolean))
+      match: (url) => matcher(this.getPathSegments(url))
     });
   }
   match(method, path) {
-    if (!this.roots[method])
+    const root = this.roots[method];
+    if (!root)
       return null;
-    const segments = path.split("/").filter(Boolean);
+    const segments = this.getPathSegments(path);
+    if (segments.length === 0) {
+      return root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+    }
     const params = {};
-    let node = this.roots[method];
+    let node = root;
     let i = 0;
     while (node && i < segments.length) {
       const segment = segments[i];
@@ -130,7 +184,9 @@ class Web {
       return null;
     }
     if (i === segments.length || node.segment === "*") {
-      return node.handlers ? { handlers: node.handlers, params } : null;
+      if (node.handlers) {
+        return Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+      }
     }
     return null;
   }
@@ -149,11 +205,11 @@ class Web {
   scope(path, callback) {
     const scopedApp = new this.constructor;
     callback(scopedApp);
-    const baseSegments = path.split("/").filter(Boolean);
+    const baseSegments = this.getPathSegments(path);
     for (const mw of scopedApp.middlewares) {
       const originalMatch = mw.match;
       const prefixedMatch = (url) => {
-        const urlSegments = url.split("/").filter(Boolean);
+        const urlSegments = this.getPathSegments(url);
         if (urlSegments.length < baseSegments.length) {
           return { matched: false, params: {} };
         }
@@ -169,7 +225,8 @@ class Web {
       this.middlewares.push({
         ...mw,
         match: prefixedMatch,
-        path: path + (mw.path ?? "")
+        path: path + (mw.path ?? ""),
+        pathPrefix: getStaticPrefix(path + (mw.path ?? ""))
       });
     }
     this.route(path, scopedApp);
@@ -219,88 +276,116 @@ class Web {
     }));
     return this;
   }
+  createContext(req, params, parsedUrl) {
+    const ctx = {
+      req,
+      params,
+      state: {},
+      header: (name, value) => {},
+      set: (key, value) => {
+        ctx.state[key] = value;
+      },
+      get: (key) => ctx.state[key],
+      redirect: (url, status = 302) => {
+        return new Response(null, {
+          status,
+          headers: { Location: url }
+        });
+      },
+      body: async () => {
+        if (!req.body)
+          return {};
+        const type = req.headers.get("content-type") ?? "";
+        if (type.includes("application/x-www-form-urlencoded")) {
+          const formData = await req.formData();
+          return Object.fromEntries(formData.entries());
+        }
+        return type.includes("application/json") ? req.json() : {};
+      },
+      json: (data, status = 200, headers) => {
+        const responseHeaders = new Headers({
+          "Content-Type": "application/json",
+          ...headers
+        });
+        return new Response(JSON.stringify(data), { status, headers: responseHeaders });
+      },
+      text: (data, status = 200, headers) => {
+        const responseHeaders = new Headers({
+          "Content-Type": "text/plain",
+          ...headers
+        });
+        return new Response(data, { status, headers: responseHeaders });
+      },
+      html: (html, status = 200, headers) => {
+        const responseHeaders = new Headers({
+          "Content-Type": "text/html; charset=utf-8",
+          ...headers
+        });
+        return new Response(html, { status, headers: responseHeaders });
+      },
+      query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS
+    };
+    return ctx;
+  }
   async handle(req) {
-    const url = new URL(req.url);
     const method = req.method;
-    const path = url.pathname;
+    const parsedUrl = this.parseUrl(req.url);
+    const path = parsedUrl.pathname;
     try {
       const matched = this.match(method, path);
       if (!matched) {
         return new Response("Not Found", { status: 404 });
       }
+      if (this.middlewares.length === 0 && matched.params === EMPTY_PARAMS && matched.handlers?.length === 1) {
+        const ctx2 = this.createContext(req, EMPTY_PARAMS, parsedUrl);
+        const result = await matched.handlers[0](ctx2, async () => {});
+        return result instanceof Response ? result : new Response("No response returned by handler", { status: 500 });
+      }
+      if (this.middlewares.length === 0) {
+        const ctx2 = this.createContext(req, matched.params, parsedUrl);
+        for (const handler of matched.handlers || []) {
+          const result = await handler(ctx2, async () => {});
+          if (result instanceof Response) {
+            return result;
+          }
+        }
+        return new Response("No response returned by handler", { status: 500 });
+      }
       const methodMiddlewares = this.getMethodMiddlewares(method);
       const middlewares = [];
-      const params = matched.params;
-      for (const mw of methodMiddlewares) {
-        const matchResult = mw.match(path);
-        if (matchResult.matched) {
-          Object.assign(params, matchResult.params);
-          middlewares.push(mw.handler);
+      let finalParams = matched.params;
+      if (methodMiddlewares.length > 0) {
+        for (const mw of methodMiddlewares) {
+          if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+            continue;
+          }
+          const matchResult = mw.match(path);
+          if (matchResult.matched) {
+            if (Object.keys(matchResult.params).length > 0) {
+              if (finalParams === EMPTY_PARAMS) {
+                finalParams = { ...matchResult.params };
+              } else {
+                finalParams = { ...finalParams, ...matchResult.params };
+              }
+            }
+            middlewares.push(mw.handler);
+          }
         }
       }
-      const ctx = {
-        req,
-        params,
-        state: {},
-        header: (name, value) => {},
-        set: (key, value) => {
-          ctx.state[key] = value;
-        },
-        get: (key) => ctx.state[key],
-        redirect: (url2, status = 302) => {
-          return new Response(null, {
-            status,
-            headers: { Location: url2 }
-          });
-        },
-        body: async () => {
-          if (!req.body)
-            return {};
-          const type = req.headers.get("content-type") ?? "";
-          if (type.includes("application/x-www-form-urlencoded")) {
-            const formData = await req.formData();
-            return Object.fromEntries(formData.entries());
-          }
-          return type.includes("application/json") ? req.json() : {};
-        },
-        json: (data, status = 200, headers) => {
-          const responseHeaders = new Headers({
-            "Content-Type": "application/json",
-            ...headers
-          });
-          return new Response(JSON.stringify(data), { status, headers: responseHeaders });
-        },
-        text: (data, status = 200, headers) => {
-          const responseHeaders = new Headers({
-            "Content-Type": "text/plain",
-            ...headers
-          });
-          return new Response(data, { status, headers: responseHeaders });
-        },
-        html: (html, status = 200, headers) => {
-          const responseHeaders = new Headers({
-            "Content-Type": "text/html; charset=utf-8",
-            ...headers
-          });
-          return new Response(html, { status, headers: responseHeaders });
-        },
-        query: () => new URLSearchParams(url.search)
-      };
+      const ctx = this.createContext(req, finalParams, parsedUrl);
       const stack = [...middlewares, ...matched.handlers ?? []];
-      let response;
       for (const fn of stack) {
         const result = await fn(ctx, async () => {});
         if (result instanceof Response) {
-          response = result;
-          break;
+          return result;
         }
       }
-      return response ?? new Response("No response returned by handler", { status: 500 });
+      return new Response("No response returned by handler", { status: 500 });
     } catch (err) {
       if (this.errorHandler) {
         const errorCtx = {
           req,
-          params: {},
+          params: EMPTY_PARAMS,
           state: {},
           text: (data, status = 500) => new Response(data, { status }),
           json: (data, status = 500) => new Response(JSON.stringify(data), {
@@ -311,7 +396,7 @@ class Web {
             status,
             headers: { "Content-Type": "text/html" }
           }),
-          query: () => url.searchParams,
+          query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
           body: async () => ({}),
           header: () => {},
           set: () => {},
@@ -326,26 +411,45 @@ class Web {
     }
   }
 }
+function getStaticPrefix(path) {
+  if (!path || path === "/")
+    return "/";
+  const segments = path.split("/").filter(Boolean);
+  const staticSegments = [];
+  for (const segment of segments) {
+    if (segment.startsWith(":") || segment === "*") {
+      break;
+    }
+    staticSegments.push(segment);
+  }
+  return staticSegments.length > 0 ? "/" + staticSegments.join("/") : "/";
+}
 function createPathMatcherSegments(segments) {
+  const segmentCount = segments.length;
   return (urlSegments) => {
-    if (urlSegments.length < segments.length)
+    if (urlSegments.length < segmentCount)
       return { matched: false, params: {} };
     const params = {};
-    for (let i = 0;i < segments.length; i++) {
+    let hasParams = false;
+    for (let i = 0;i < segmentCount; i++) {
       const seg = segments[i];
       const part = urlSegments[i];
       if (seg === "*")
-        return { matched: true, params };
+        return { matched: true, params: hasParams ? params : {} };
       if (seg?.startsWith(":")) {
         if (!part)
           return { matched: false, params: {} };
         params[seg.slice(1)] = decodeURIComponent(part);
+        hasParams = true;
       } else if (seg !== part) {
         return { matched: false, params: {} };
       }
     }
-    const matched = urlSegments.length === segments.length;
-    return { matched, params: matched ? params : {} };
+    const matched = urlSegments.length === segmentCount;
+    return {
+      matched,
+      params: matched ? hasParams ? params : {} : {}
+    };
   };
 }
 function joinPaths(...paths) {

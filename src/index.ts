@@ -1,26 +1,81 @@
 import type { Context, MatchResult, Method, Middleware, MiddlewareRoute, Next, Route } from "./types";
 
+/**
+ * A node in the trie data structure used for efficient route matching.
+ * Each node represents a path segment and can have static children, parameter children, or wildcard children.
+ *
+ * @template T - The type of the context state object
+ */
 class TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
+	/** Map of static path segments to their corresponding child nodes */
 	children = new Map<string, TrieNode<T>>();
+	/** Parameter child node with its parameter name (e.g., for ":id" routes) */
 	paramChild?: { node: TrieNode<T>; name: string };
+	/** Wildcard child node (for "*" routes that match remaining path segments) */
 	wildcardChild?: TrieNode<T>;
+	/** Array of middleware handlers to execute when this node represents a complete route */
 	handlers?: Middleware<T>[];
+	/** HTTP method this node handles (GET, POST, etc.) */
 	method?: Method;
 
+	/**
+	 * Creates a new TrieNode
+	 * @param segment - The path segment this node represents
+	 */
 	constructor(public segment?: string) {}
 }
 
-// Pre-allocated objects for better performance
+/** Frozen empty object used as default params to avoid object allocation */
 const EMPTY_PARAMS = Object.freeze({});
+
+/** Empty URLSearchParams instance used as default query params */
 const EMPTY_SEARCH_PARAMS = new URLSearchParams();
 
+/**
+ * High-performance web framework with trie-based routing, middleware support, and extensive caching.
+ *
+ * Features:
+ * - Fast trie-based route matching
+ * - Middleware support with method and path filtering
+ * - Route scoping and sub-applications
+ * - Built-in caching for improved performance
+ * - Support for all standard HTTP methods
+ * - Parameter extraction and wildcard routes
+ *
+ * @template T - The type of the context state object that will be shared across middleware
+ *
+ * @example
+ * ```typescript
+ * const app = new Web<{ user: User }>();
+ *
+ * app.get('/users/:id', async (ctx, next) => {
+ *   const user = await getUser(ctx.params.id);
+ *   ctx.set('user', user);
+ *   return ctx.json(user);
+ * });
+ *
+ * app.use('/admin', async (ctx, next) => {
+ *   // Authentication middleware
+ *   if (!ctx.get('user')?.isAdmin) {
+ *     return ctx.json({ error: 'Unauthorized' }, 401);
+ *   }
+ *   await next();
+ * });
+ * ```
+ */
 export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
+	/** Array of all registered routes */
 	private routes: Route<T>[] = [];
+	/** Array of all registered middleware */
 	private middlewares: MiddlewareRoute<T>[] = [];
+	/** Cache for method-specific middleware to avoid filtering on each request */
 	private methodMiddlewareCache = new Map<Method, MiddlewareRoute<T>[]>();
+	/** Cache for parsed URLs to avoid repeated parsing */
 	private urlCache = new Map<string, { pathname: string; searchParams?: URLSearchParams }>();
-	private segmentCache = new Map<string, string[]>(); // Cache for path.split("/").filter(Boolean)
+	/** Cache for path segments to avoid repeated splitting */
+	private segmentCache = new Map<string, string[]>();
 
+	/** Trie roots for each HTTP method for fast route matching */
 	private roots: Record<Method, TrieNode<T>> = {
 		GET: new TrieNode(),
 		POST: new TrieNode(),
@@ -31,23 +86,53 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		HEAD: new TrieNode(),
 	};
 
+	/**
+	 * Creates a new Web framework instance
+	 */
 	constructor() {
 		this.handle = this.handle.bind(this);
 	}
 
+	/**
+	 * Clears all internal caches. Called automatically when routes or middleware are modified.
+	 * @private
+	 */
 	private clearCaches() {
 		this.methodMiddlewareCache.clear();
 		this.urlCache.clear();
 		this.segmentCache.clear();
 	}
 
+	/** Error handler function for handling uncaught errors */
 	private errorHandler?: (err: Error, ctx: Context<T>) => Response | Promise<Response>;
 
+	/**
+	 * Sets a global error handler for the application.
+	 * This handler will be called whenever an unhandled error occurs during request processing.
+	 *
+	 * @param handler - Function that takes an error and context, returns a Response
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.onError((err, ctx) => {
+	 *   console.error('Application error:', err);
+	 *   return ctx.json({ error: 'Internal Server Error' }, 500);
+	 * });
+	 * ```
+	 */
 	onError(handler: (err: Error, ctx: Context<T>) => Response | Promise<Response>): this {
 		this.errorHandler = handler;
 		return this;
 	}
 
+	/**
+	 * Splits a path into segments and caches the result for performance.
+	 *
+	 * @param path - The URL path to split
+	 * @returns Array of path segments (empty segments filtered out)
+	 * @private
+	 */
 	private getPathSegments(path: string): string[] {
 		if (this.segmentCache.has(path)) {
 			return this.segmentCache.get(path)!;
@@ -63,6 +148,14 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return segments;
 	}
 
+	/**
+	 * Parses a URL into pathname and search parameters with caching for performance.
+	 * Handles both absolute and relative URLs.
+	 *
+	 * @param url - The URL to parse
+	 * @returns Object containing pathname and optional URLSearchParams
+	 * @private
+	 */
 	private parseUrl(url: string): { pathname: string; searchParams?: URLSearchParams } {
 		// Check cache first
 		if (this.urlCache.has(url)) {
@@ -107,6 +200,37 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return result;
 	}
 
+	/**
+	 * Registers middleware that will run for matching requests.
+	 * Middleware can be global, path-specific, or method and path specific.
+	 *
+	 * @param args - Variable arguments for different middleware registration patterns:
+	 *   - `[handler]` - Global middleware that runs for all requests
+	 *   - `[path, handler]` - Path-specific middleware
+	 *   - `[method, path, handler]` - Method and path-specific middleware
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Global middleware
+	 * app.use(async (ctx, next) => {
+	 *   console.log(`${ctx.req.method} ${ctx.req.url}`);
+	 *   await next();
+	 * });
+	 *
+	 * // Path-specific middleware
+	 * app.use('/api', async (ctx, next) => {
+	 *   ctx.set('apiVersion', '1.0');
+	 *   await next();
+	 * });
+	 *
+	 * // Method and path-specific middleware
+	 * app.use('POST', '/users', async (ctx, next) => {
+	 *   // Validate request body
+	 *   await next();
+	 * });
+	 * ```
+	 */
 	use(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): this {
 		this.clearCaches();
 
@@ -141,6 +265,20 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
+	/**
+	 * Adds a route with the specified method, path, and handlers to the trie structure.
+	 *
+	 * @param method - HTTP method (GET, POST, etc.)
+	 * @param path - URL path pattern (supports :param and * wildcards)
+	 * @param handlers - One or more middleware handlers for this route
+	 *
+	 * @example
+	 * ```typescript
+	 * app.addRoute('GET', '/users/:id', async (ctx) => {
+	 *   return ctx.json({ id: ctx.params.id });
+	 * });
+	 * ```
+	 */
 	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]) {
 		this.clearCaches();
 
@@ -183,6 +321,21 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		});
 	}
 
+	/**
+	 * Matches a method and path against the trie structure to find handlers and extract parameters.
+	 *
+	 * @param method - HTTP method to match
+	 * @param path - URL path to match
+	 * @returns Object with handlers and params if matched, null otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const match = app.match('GET', '/users/123');
+	 * if (match) {
+	 *   console.log(match.params.id); // "123"
+	 * }
+	 * ```
+	 */
 	match(method: Method, path: string): { handlers?: Middleware<T>[]; params: Record<string, string> } | null {
 		const root = this.roots[method];
 		if (!root) return null;
@@ -236,6 +389,13 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return null;
 	}
 
+	/**
+	 * Gets cached middleware that applies to a specific HTTP method.
+	 *
+	 * @param method - HTTP method to filter middleware for
+	 * @returns Array of middleware routes that apply to the method
+	 * @private
+	 */
 	private getMethodMiddlewares(method: Method): MiddlewareRoute<T>[] {
 		if (this.methodMiddlewareCache.has(method)) {
 			return this.methodMiddlewareCache.get(method)!;
@@ -250,6 +410,29 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return result;
 	}
 
+	/**
+	 * Creates a scoped sub-application that inherits middleware and routes with a path prefix.
+	 * Useful for organizing routes and creating modular applications.
+	 *
+	 * @param path - Base path for the scope
+	 * @param callback - Function that receives the scoped app instance to configure
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.scope('/api/v1', (api) => {
+	 *   api.get('/users', async (ctx) => {
+	 *     return ctx.json(await getUsers());
+	 *   });
+	 *
+	 *   api.post('/users', async (ctx) => {
+	 *     const user = await ctx.body<User>();
+	 *     return ctx.json(await createUser(user));
+	 *   });
+	 * });
+	 * // Routes will be available at /api/v1/users
+	 * ```
+	 */
 	scope(path: string, callback: (scopeApp: this) => void): this {
 		const scopedApp = new (this.constructor as any)() as this;
 		callback(scopedApp);
@@ -289,6 +472,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
+	/**
+	 * Mounts a sub-application at the specified path prefix.
+	 * All routes from the sub-application will be prefixed with the given path.
+	 *
+	 * @param prefix - Path prefix to mount the sub-application at
+	 * @param subApp - Web instance to mount
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * const adminApp = new Web();
+	 * adminApp.get('/dashboard', handler);
+	 *
+	 * app.route('/admin', adminApp);
+	 * // Dashboard will be available at /admin/dashboard
+	 * ```
+	 */
 	route(prefix: string, subApp: this): this {
 		for (const route of subApp.routes) {
 			const newPath = joinPaths(prefix, route.path);
@@ -297,36 +497,190 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
+	/**
+	 * Registers a GET route handler.
+	 *
+	 * @param path - URL path pattern (supports :param and * wildcards)
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.get('/users/:id', async (ctx) => {
+	 *   const user = await getUserById(ctx.params.id);
+	 *   return ctx.json(user);
+	 * });
+	 * ```
+	 */
 	get(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("GET", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers a POST route handler.
+	 *
+	 * @param path - URL path pattern
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.post('/users', async (ctx) => {
+	 *   const userData = await ctx.body<CreateUserRequest>();
+	 *   const user = await createUser(userData);
+	 *   return ctx.json(user, 201);
+	 * });
+	 * ```
+	 */
 	post(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("POST", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers a PUT route handler for complete resource updates.
+	 * PUT is typically used when you want to replace an entire resource.
+	 *
+	 * @param path - URL path pattern
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Basic PUT route
+	 * app.put('/users/:id', async (ctx) => {
+	 *   const userData = await ctx.body<User>();
+	 *   const updatedUser = await replaceUser(ctx.params.id, userData);
+	 *   return ctx.json(updatedUser);
+	 * });
+	 *
+	 * // PUT with optimistic concurrency control
+	 * app.put('/documents/:id',
+	 *   async (ctx) => {
+	 *     const doc = await ctx.body<Document>();
+	 *     if (ctx.req.headers.get('If-Match') !== doc.version) {
+	 *       return ctx.json({ error: 'Version mismatch' }, 412);
+	 *     }
+	 *     const savedDoc = await saveDocument(doc);
+	 *     return ctx.json(savedDoc);
+	 *   }
+	 * );
+	 * ```
+	 */
 	put(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("PUT", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers a DELETE route handler.
+	 *
+	 * @param path - URL path pattern
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.delete('/users/:id', async (ctx) => {
+	 *   await deleteUser(ctx.params.id);
+	 *   return new Response(null, { status: 204 });
+	 * });
+	 * ```
+	 */
 	delete(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("DELETE", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers a PATCH route handler for partial updates to resources.
+	 * PATCH is typically used when you want to update only specific fields of a resource.
+	 *
+	 * @param path - URL path pattern (supports :param and * wildcards)
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Basic PATCH route
+	 * app.patch('/users/:id', async (ctx) => {
+	 *   const updates = await ctx.body<Partial<User>>();
+	 *   const updatedUser = await updateUser(ctx.params.id, updates);
+	 *   return ctx.json(updatedUser);
+	 * });
+	 *
+	 * // PATCH with validation middleware
+	 * app.patch('/articles/:id',
+	 *   validateArticleUpdate, // middleware that validates the patch body
+	 *   async (ctx) => {
+	 *     const updates = ctx.get('validatedUpdates');
+	 *     const article = await updateArticle(ctx.params.id, updates);
+	 *     return ctx.json(article);
+	 *   }
+	 * );
+	 * ```
+	 */
 	patch(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("PATCH", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers an OPTIONS route handler for CORS preflight requests.
+	 * OPTIONS requests are typically used to determine what HTTP methods
+	 * are supported for a given endpoint.
+	 *
+	 * @param path - URL path pattern
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Basic OPTIONS handler
+	 * app.options('/users', (ctx) => {
+	 *   return new Response(null, {
+	 *     headers: {
+	 *       'Allow': 'GET, POST, OPTIONS',
+	 *       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+	 *       'Access-Control-Allow-Headers': 'Content-Type'
+	 *     }
+	 *   });
+	 * });
+	 *
+	 * // Automatic CORS handling
+	 * app.options('*', (ctx) => {
+	 *   return new Response(null, {
+	 *     headers: {
+	 *       'Access-Control-Allow-Origin': '*',
+	 *       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+	 *       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+	 *     }
+	 *   });
+	 * });
+	 * ```
+	 */
 	options(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute("OPTIONS", path, ...handlers);
 		return this;
 	}
 
+	/**
+	 * Registers a HEAD route handler.
+	 * HEAD responses automatically strip the response body while preserving headers and status.
+	 *
+	 * @param path - URL path pattern
+	 * @param handlers - One or more middleware handlers
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.head('/users/:id', async (ctx) => {
+	 *   const exists = await userExists(ctx.params.id);
+	 *   return exists ? new Response() : new Response(null, { status: 404 });
+	 * });
+	 * ```
+	 */
 	head(path: string, ...handlers: Middleware<T>[]): this {
 		this.addRoute(
 			"HEAD",
@@ -345,7 +699,15 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return this;
 	}
 
-	// Optimized context creation with object reuse patterns
+	/**
+	 * Creates a context object for the current request with helper methods.
+	 *
+	 * @param req - The incoming Request object
+	 * @param params - URL parameters extracted from the path
+	 * @param parsedUrl - Pre-parsed URL components
+	 * @returns Context object with request data and helper methods
+	 * @private
+	 */
 	private createContext(req: Request, params: Record<string, string>, parsedUrl: { pathname: string; searchParams?: URLSearchParams }): Context<T> {
 		const ctx: Context<T> = {
 			req,
@@ -398,6 +760,30 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		return ctx;
 	}
 
+	/**
+	 * Main request handler that processes incoming requests through the middleware chain and route handlers.
+	 * This method implements several optimization paths for different scenarios:
+	 * - Ultra-fast path: no middleware, no parameters, single handler
+	 * - Fast path: no middleware, might have parameters
+	 * - Full path: includes middleware processing
+	 *
+	 * @param req - The incoming Request object
+	 * @returns Promise that resolves to a Response object
+	 *
+	 * @example
+	 * ```typescript
+	 * // Use with a server
+	 * const server = Bun.serve({
+	 *   port: 3000,
+	 *   fetch: app.handle,
+	 * });
+	 *
+	 * // Or with other runtimes
+	 * addEventListener('fetch', (event) => {
+	 *   event.respondWith(app.handle(event.request));
+	 * });
+	 * ```
+	 */
 	async handle(req: Request): Promise<Response> {
 		const method = req.method as Method;
 		const parsedUrl = this.parseUrl(req.url);
@@ -507,6 +893,20 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 }
 
+/**
+ * Extracts the static prefix from a path pattern by finding the longest initial segment
+ * that doesn't contain parameters (:) or wildcards (*). Used for quick middleware filtering.
+ *
+ * @param path - The path pattern to analyze (e.g., "/users/:id/profile")
+ * @returns The static prefix (e.g., "/users") or "/" if no static prefix exists
+ *
+ * @example
+ * ```typescript
+ * getStaticPrefix("/users/:id/profile"); // "/users"
+ * getStaticPrefix("/static/*"); // "/static"
+ * getStaticPrefix("/:param/items"); // "/"
+ * ```
+ */
 function getStaticPrefix(path: string): string {
 	if (!path || path === "/") return "/";
 
@@ -523,6 +923,20 @@ function getStaticPrefix(path: string): string {
 	return staticSegments.length > 0 ? "/" + staticSegments.join("/") : "/";
 }
 
+/**
+ * Creates a path matching function that checks if URL segments match a route pattern.
+ * The matcher handles parameters (:) and wildcards (*) and extracts parameter values.
+ *
+ * @param segments - The route pattern segments to match against (e.g., ["users", ":id"])
+ * @returns A function that takes URL segments and returns a match result with parameters
+ *
+ * @example
+ * ```typescript
+ * const matcher = createPathMatcherSegments(["users", ":id"]);
+ * const result = matcher(["users", "123"]);
+ * // Returns { matched: true, params: { id: "123" } }
+ * ```
+ */
 function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) => MatchResult {
 	const segmentCount = segments.length;
 
@@ -555,6 +969,19 @@ function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) 
 	};
 }
 
+/**
+ * Joins multiple path segments into a single path, ensuring proper slashes between them.
+ * Removes leading/trailing slashes from individual segments before joining.
+ *
+ * @param paths - Path segments to join (e.g., ["api", "v1", "users"])
+ * @returns Joined path with single slashes (e.g., "/api/v1/users")
+ *
+ * @example
+ * ```typescript
+ * joinPaths("/api/", "/v1", "users/"); // "/api/v1/users"
+ * joinPaths("", "users", ":id"); // "/users/:id"
+ * ```
+ */
 function joinPaths(...paths: string[]) {
 	return (
 		"/" +
