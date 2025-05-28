@@ -31,9 +31,6 @@ const EMPTY_PARAMS = Object.freeze({});
 /** Empty URLSearchParams instance used as default query params */
 const EMPTY_SEARCH_PARAMS = new URLSearchParams();
 
-/** Pre-compiled regex for URL parsing optimization */
-const URL_PARSE_REGEX = /^(?:([^:/?#]+):)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/;
-
 /**
  * High-performance web framework with trie-based routing, middleware support, and extensive caching.
  *
@@ -77,6 +74,10 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	private urlCache = new Map<string, { pathname: string; searchParams?: URLSearchParams }>();
 	/** Cache for path segments to avoid repeated splitting */
 	private segmentCache = new Map<string, string[]>();
+	/** Cache for compiled route matchers */
+	private matcherCache = new Map<string, (urlSegments: string[]) => MatchResult>();
+	/** Cache for frequently matched routes */
+	private routeMatchCache = new Map<string, { handlers?: Middleware<T>[]; params: Record<string, string> } | null>();
 
 	/** Trie roots for each HTTP method for fast route matching */
 	private roots: Record<Method, TrieNode<T>> = {
@@ -104,6 +105,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		this.methodMiddlewareCache.clear();
 		this.urlCache.clear();
 		this.segmentCache.clear();
+		this.routeMatchCache.clear();
 	}
 
 	/** Error handler function for handling uncaught errors */
@@ -137,14 +139,13 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @private
 	 */
 	private getPathSegments(path: string): string[] {
-		if (this.segmentCache.has(path)) {
-			return this.segmentCache.get(path)!;
-		}
+		let segments = this.segmentCache.get(path);
+		if (segments) return segments;
 
-		const segments = path.split("/").filter(Boolean);
+		segments = path.split("/").filter(Boolean);
 
 		// Cache with size limit
-		if (this.segmentCache.size < 500) {
+		if (this.segmentCache.size < 1000) {
 			this.segmentCache.set(path, segments);
 		}
 
@@ -167,7 +168,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		// Fast path: simple pathname-only URLs (most common case)
 		if (url[0] === "/" && !url.includes("?") && !url.includes("#")) {
 			const result = { pathname: url, searchParams: undefined };
-			if (this.urlCache.size < 1000) {
+			if (this.urlCache.size < 2000) {
 				this.urlCache.set(url, result);
 			}
 			return result;
@@ -208,7 +209,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		const result = { pathname, searchParams };
 
 		// Cache with LRU eviction when at capacity
-		if (this.urlCache.size >= 1000) {
+		if (this.urlCache.size >= 2000) {
 			// Remove oldest entry (first key in Map)
 			const firstKey = this.urlCache.keys().next().value;
 			if (firstKey !== undefined) this.urlCache.delete(firstKey);
@@ -261,7 +262,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		} else if (args.length === 2) {
 			const [path, handler] = args;
 			const segments = this.getPathSegments(path);
-			const match = createPathMatcherSegments(segments);
+			const match = this.getCachedMatcher(path, segments);
 			this.middlewares.push({
 				path,
 				pathPrefix: getStaticPrefix(path),
@@ -271,7 +272,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		} else {
 			const [method, path, handler] = args;
 			const segments = this.getPathSegments(path);
-			const match = createPathMatcherSegments(segments);
+			const match = this.getCachedMatcher(path, segments);
 			this.middlewares.push({
 				method,
 				path,
@@ -281,6 +282,19 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			});
 		}
 		return this;
+	}
+
+	/**
+	 * Gets or creates a cached matcher function for the given path pattern
+	 * @private
+	 */
+	private getCachedMatcher(path: string, segments: string[]): (urlSegments: string[]) => MatchResult {
+		let matcher = this.matcherCache.get(path);
+		if (!matcher) {
+			matcher = createPathMatcherSegments(segments);
+			this.matcherCache.set(path, matcher);
+		}
+		return matcher;
 	}
 
 	/**
@@ -330,7 +344,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		node.handlers = handlers;
 		node.method = method;
 
-		const matcher = createPathMatcherSegments(segments);
+		const matcher = this.getCachedMatcher(path, segments);
 		this.routes.push({
 			method,
 			path,
@@ -355,13 +369,25 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * ```
 	 */
 	match(method: Method, path: string): { handlers?: Middleware<T>[]; params: Record<string, string> } | null {
+		// Check route match cache first
+		const cacheKey = `${method}:${path}`;
+		const cached = this.routeMatchCache.get(cacheKey);
+		if (cached !== undefined) return cached;
+
 		const root = this.roots[method];
-		if (!root) return null;
+		if (!root) {
+			this.routeMatchCache.set(cacheKey, null);
+			return null;
+		}
 
 		const segments = this.getPathSegments(path);
 		if (segments.length === 0) {
 			// Root path "/"
-			return root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+			const result = root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+			if (this.routeMatchCache.size < 500) {
+				this.routeMatchCache.set(cacheKey, result);
+			}
+			return result;
 		}
 
 		const params: Record<string, string> = {};
@@ -394,16 +420,27 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				break;
 			}
 
+			if (this.routeMatchCache.size < 500) {
+				this.routeMatchCache.set(cacheKey, null);
+			}
 			return null;
 		}
 
 		// Check if we've consumed all segments or hit a wildcard
 		if (i === segments.length || node.segment === "*") {
 			if (node.handlers) {
-				return Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+				const result = Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+
+				if (this.routeMatchCache.size < 500) {
+					this.routeMatchCache.set(cacheKey, result);
+				}
+				return result;
 			}
 		}
 
+		if (this.routeMatchCache.size < 500) {
+			this.routeMatchCache.set(cacheKey, null);
+		}
 		return null;
 	}
 
@@ -706,6 +743,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			...handlers.map((handler) => async (ctx: Context<T>, next: Next) => {
 				const res = await handler(ctx, next);
 				if (res instanceof Response) {
+					// Strip the body for HEAD requests
 					return new Response(null, {
 						status: res.status,
 						headers: res.headers,
@@ -730,17 +768,20 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		// Initialize response headers storage
 		const responseHeaders = new Headers();
 
+		// Pre-allocate state object
+		const state = {} as T;
+
 		const ctx: Context<T> = {
 			req,
 			params,
-			state: {} as T,
+			state,
 			header: (name: string, value: string) => {
 				responseHeaders.set(name, value);
 			},
 			set: (key: keyof T, value: T[keyof T]) => {
-				ctx.state[key] = value;
+				state[key] = value;
 			},
-			get: (key) => ctx.state[key],
+			get: (key) => state[key],
 			redirect: (url: string, status = 302) => {
 				responseHeaders.set("Location", url);
 				return new Response(null, {
@@ -758,7 +799,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				return type.includes("application/json") ? (req.json() as Promise<U>) : ({} as U);
 			},
 			json: (data: unknown, status = 200, headers?: Record<string, string>) => {
-				const allHeaders = new Headers(responseHeaders);
+				const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
 				allHeaders.set("Content-Type", "application/json");
 				if (headers) {
 					Object.entries(headers).forEach(([name, value]) => {
@@ -771,7 +812,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				});
 			},
 			text: (data: string | null | undefined, status = 200, headers?: Record<string, string>) => {
-				const allHeaders = new Headers(responseHeaders);
+				const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
 				allHeaders.set("Content-Type", "text/plain");
 				if (headers) {
 					Object.entries(headers).forEach(([name, value]) => {
@@ -784,7 +825,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				});
 			},
 			html: (html: string | null | undefined, status = 200, headers?: Record<string, string>) => {
-				const allHeaders = new Headers(responseHeaders);
+				const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
 				allHeaders.set("Content-Type", "text/html; charset=utf-8");
 				if (headers) {
 					Object.entries(headers).forEach(([name, value]) => {
@@ -849,10 +890,14 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			if (this.middlewares.length === 0) {
 				const ctx = this.createContext(req, matched.params, parsedUrl);
 
-				for (const handler of matched.handlers || []) {
-					const result = await handler(ctx, async () => {});
-					if (result instanceof Response) {
-						return result;
+				// Optimized handler execution without allocation
+				const handlers = matched.handlers;
+				if (handlers) {
+					for (let i = 0; i < handlers.length; i++) {
+						const result = await handlers[i](ctx, async () => {});
+						if (result instanceof Response) {
+							return result;
+						}
 					}
 				}
 
@@ -861,13 +906,18 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			// Full path with middleware processing
 			const methodMiddlewares = this.getMethodMiddlewares(method);
-			const middlewares: Middleware<T>[] = [];
 			let finalParams = matched.params;
+
+			// Pre-allocate middleware array with estimated size
+			const middlewares: Middleware<T>[] = new Array(methodMiddlewares.length);
+			let middlewareCount = 0;
 
 			// Only process middlewares if there are any
 			if (methodMiddlewares.length > 0) {
 				// Pre-filter middlewares by path prefix before expensive matching
-				for (const mw of methodMiddlewares) {
+				for (let i = 0; i < methodMiddlewares.length; i++) {
+					const mw = methodMiddlewares[i];
+
 					// Skip expensive match() call if path doesn't start with middleware's static prefix
 					if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
 						continue;
@@ -883,7 +933,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 								finalParams = { ...finalParams, ...matchResult.params };
 							}
 						}
-						middlewares.push(mw.handler);
+						middlewares[middlewareCount++] = mw.handler;
 					}
 				}
 			}
@@ -892,12 +942,27 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const ctx = this.createContext(req, finalParams, parsedUrl);
 
 			// Execute middleware and handlers
-			const stack = [...middlewares, ...(matched.handlers ?? [])];
+			const handlers = matched.handlers;
+			const totalHandlers = middlewareCount + (handlers?.length || 0);
 
-			for (const fn of stack) {
-				const result = await fn(ctx, async () => {});
+			if (totalHandlers === 0) {
+				return new Response("No response returned by handler", { status: 500 });
+			}
+
+			// Inline execution for better performance
+			for (let i = 0; i < middlewareCount; i++) {
+				const result = await middlewares[i](ctx, async () => {});
 				if (result instanceof Response) {
 					return result;
+				}
+			}
+
+			if (handlers) {
+				for (let i = 0; i < handlers.length; i++) {
+					const result = await handlers[i](ctx, async () => {});
+					if (result instanceof Response) {
+						return result;
+					}
 				}
 			}
 
@@ -914,12 +979,12 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 					json: (data, status = 500) =>
 						new Response(JSON.stringify(data), {
 							status,
-							headers: { "Content-Type": "application/json" },
+							headers: new Headers({ "Content-Type": "application/json" }),
 						}),
 					html: (html, status = 500) =>
 						new Response(html, {
 							status,
-							headers: { "Content-Type": "text/html" },
+							headers: new Headers({ "Content-Type": "text/html; charset=utf-8" }),
 						}),
 					query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
 					body: async () => ({} as any),
@@ -981,23 +1046,54 @@ function getStaticPrefix(path: string): string {
  */
 function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) => MatchResult {
 	const segmentCount = segments.length;
+	const hasWildcard = segments[segmentCount - 1] === "*";
+
+	// Pre-calculate parameter positions and names for faster matching
+	const paramPositions: Array<{ index: number; name: string }> = [];
+	for (let i = 0; i < segmentCount; i++) {
+		if (segments[i].startsWith(":")) {
+			paramPositions.push({ index: i, name: segments[i].slice(1) });
+		}
+	}
+
+	const hasParams = paramPositions.length > 0;
 
 	return (urlSegments: string[]): MatchResult => {
-		if (urlSegments.length < segmentCount) return { matched: false, params: {} };
+		// Quick length check for non-wildcard routes
+		if (!hasWildcard && urlSegments.length !== segmentCount) {
+			return { matched: false, params: {} };
+		}
 
+		// Wildcard routes must have at least as many segments
+		if (hasWildcard && urlSegments.length < segmentCount - 1) {
+			return { matched: false, params: {} };
+		}
+
+		// Fast path for routes without parameters
+		if (!hasParams && !hasWildcard) {
+			for (let i = 0; i < segmentCount; i++) {
+				if (segments[i] !== urlSegments[i]) {
+					return { matched: false, params: {} };
+				}
+			}
+			return { matched: true, params: {} };
+		}
+
+		// Match with parameter extraction
 		const params: Record<string, string> = {};
-		let hasParams = false;
 
 		for (let i = 0; i < segmentCount; i++) {
 			const seg = segments[i];
 			const part = urlSegments[i];
 
-			if (seg === "*") return { matched: true, params: hasParams ? params : {} };
+			if (seg === "*") {
+				params["*"] = urlSegments.slice(i).join("/");
+				return { matched: true, params };
+			}
 
-			if (seg?.startsWith(":")) {
+			if (seg.startsWith(":")) {
 				if (!part) return { matched: false, params: {} };
 				params[seg.slice(1)] = decodeURIComponent(part);
-				hasParams = true;
 			} else if (seg !== part) {
 				return { matched: false, params: {} };
 			}
@@ -1006,7 +1102,7 @@ function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) 
 		const matched = urlSegments.length === segmentCount;
 		return {
 			matched,
-			params: matched ? (hasParams ? params : {}) : {},
+			params: matched ? params : {},
 		};
 	};
 }
@@ -1025,11 +1121,21 @@ function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) 
  * ```
  */
 function joinPaths(...paths: string[]) {
-	return (
-		"/" +
-		paths
-			.map((p) => p.replace(/^\/|\/$/g, ""))
-			.filter(Boolean)
-			.join("/")
-	);
+	let result = "/";
+	for (let i = 0; i < paths.length; i++) {
+		const p = paths[i];
+		if (p && p !== "/") {
+			// Trim slashes efficiently
+			let start = 0;
+			let end = p.length;
+			if (p[0] === "/") start++;
+			if (p[end - 1] === "/") end--;
+
+			if (end > start) {
+				if (result !== "/") result += "/";
+				result += p.slice(start, end);
+			}
+		}
+	}
+	return result;
 }
