@@ -31,6 +31,9 @@ const EMPTY_PARAMS = Object.freeze({});
 /** Empty URLSearchParams instance used as default query params */
 const EMPTY_SEARCH_PARAMS = new URLSearchParams();
 
+/** Pre-compiled regex for URL parsing optimization */
+const URL_PARSE_REGEX = /^(?:([^:/?#]+):)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/;
+
 /**
  * High-performance web framework with trie-based routing, middleware support, and extensive caching.
  *
@@ -158,39 +161,39 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 */
 	private parseUrl(url: string): { pathname: string; searchParams?: URLSearchParams } {
 		// Check cache first
-		if (this.urlCache.has(url)) {
-			return this.urlCache.get(url)!;
+		const cached = this.urlCache.get(url);
+		if (cached) return cached;
+
+		// Use regex for faster parsing
+		const match = URL_PARSE_REGEX.exec(url);
+		if (!match) {
+			// Fallback for malformed URLs
+			const result = { pathname: "/", searchParams: undefined };
+			if (this.urlCache.size < 1000) {
+				this.urlCache.set(url, result);
+			}
+			return result;
 		}
 
-		const queryStart = url.indexOf("?");
-		const hashStart = url.indexOf("#");
+		const [, protocol, host, pathname, search] = match;
 
-		// Find where pathname ends
-		let end = url.length;
-		if (queryStart !== -1) end = Math.min(end, queryStart);
-		if (hashStart !== -1) end = Math.min(end, hashStart);
-
-		// Extract pathname
-		const protocolEnd = url.indexOf("://");
-		let pathname: string;
-
-		if (protocolEnd === -1) {
-			// Relative URL
-			pathname = url.substring(0, end);
+		// Handle relative vs absolute URLs
+		let finalPathname: string;
+		if (protocol && host) {
+			// Absolute URL
+			finalPathname = pathname || "/";
 		} else {
-			const hostStart = protocolEnd + 3;
-			const pathStart = url.indexOf("/", hostStart);
-			pathname = pathStart === -1 ? "/" : url.substring(pathStart, end);
+			// Relative URL
+			finalPathname = pathname || "/";
 		}
 
-		// Only parse search params if there's a query string
+		// Only create URLSearchParams if there's actually search content
 		let searchParams: URLSearchParams | undefined;
-		if (queryStart !== -1) {
-			const searchString = hashStart === -1 ? url.substring(queryStart + 1) : url.substring(queryStart + 1, hashStart);
-			searchParams = new URLSearchParams(searchString);
+		if (search && search.length > 0) {
+			searchParams = new URLSearchParams(search);
 		}
 
-		const result = { pathname, searchParams };
+		const result = { pathname: finalPathname, searchParams };
 
 		// Cache result (with size limit to prevent memory leaks)
 		if (this.urlCache.size < 1000) {
