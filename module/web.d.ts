@@ -291,6 +291,10 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	private urlCache;
 	/** Cache for path segments to avoid repeated splitting */
 	private segmentCache;
+	/** Cache for compiled route matchers */
+	private matcherCache;
+	/** Cache for frequently matched routes */
+	private routeMatchCache;
 	/** Trie roots for each HTTP method for fast route matching */
 	private roots;
 	/**
@@ -378,6 +382,11 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 		string,
 		Middleware<T>
 	]): this;
+	/**
+	 * Gets or creates a cached matcher function for the given path pattern
+	 * @private
+	 */
+	private getCachedMatcher;
 	/**
 	 * Adds a route with the specified method, path, and handlers to the trie structure.
 	 *

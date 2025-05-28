@@ -19,6 +19,8 @@ class Web {
   methodMiddlewareCache = new Map;
   urlCache = new Map;
   segmentCache = new Map;
+  matcherCache = new Map;
+  routeMatchCache = new Map;
   roots = {
     GET: new TrieNode,
     POST: new TrieNode,
@@ -35,6 +37,7 @@ class Web {
     this.methodMiddlewareCache.clear();
     this.urlCache.clear();
     this.segmentCache.clear();
+    this.routeMatchCache.clear();
   }
   errorHandler;
   onError(handler) {
@@ -42,44 +45,57 @@ class Web {
     return this;
   }
   getPathSegments(path) {
-    if (this.segmentCache.has(path)) {
-      return this.segmentCache.get(path);
-    }
-    const segments = path.split("/").filter(Boolean);
-    if (this.segmentCache.size < 500) {
+    let segments = this.segmentCache.get(path);
+    if (segments)
+      return segments;
+    segments = path.split("/").filter(Boolean);
+    if (this.segmentCache.size < 1000) {
       this.segmentCache.set(path, segments);
     }
     return segments;
   }
   parseUrl(url) {
-    if (this.urlCache.has(url)) {
-      return this.urlCache.get(url);
+    const cached = this.urlCache.get(url);
+    if (cached)
+      return cached;
+    if (url[0] === "/" && !url.includes("?") && !url.includes("#")) {
+      const result2 = { pathname: url, searchParams: undefined };
+      if (this.urlCache.size < 2000) {
+        this.urlCache.set(url, result2);
+      }
+      return result2;
     }
     const queryStart = url.indexOf("?");
     const hashStart = url.indexOf("#");
-    let end = url.length;
+    let pathnameEnd = url.length;
     if (queryStart !== -1)
-      end = Math.min(end, queryStart);
+      pathnameEnd = Math.min(pathnameEnd, queryStart);
     if (hashStart !== -1)
-      end = Math.min(end, hashStart);
-    const protocolEnd = url.indexOf("://");
+      pathnameEnd = Math.min(pathnameEnd, hashStart);
     let pathname;
-    if (protocolEnd === -1) {
-      pathname = url.substring(0, end);
-    } else {
+    const protocolEnd = url.indexOf("://");
+    if (protocolEnd !== -1) {
       const hostStart = protocolEnd + 3;
       const pathStart = url.indexOf("/", hostStart);
-      pathname = pathStart === -1 ? "/" : url.substring(pathStart, end);
+      pathname = pathStart !== -1 ? url.slice(pathStart, pathnameEnd) : "/";
+    } else {
+      pathname = url.slice(0, pathnameEnd) || "/";
     }
     let searchParams;
     if (queryStart !== -1) {
-      const searchString = hashStart === -1 ? url.substring(queryStart + 1) : url.substring(queryStart + 1, hashStart);
-      searchParams = new URLSearchParams(searchString);
+      const queryEnd = hashStart !== -1 ? hashStart : url.length;
+      const queryString = url.slice(queryStart + 1, queryEnd);
+      if (queryString.length > 0) {
+        searchParams = new URLSearchParams(queryString);
+      }
     }
     const result = { pathname, searchParams };
-    if (this.urlCache.size < 1000) {
-      this.urlCache.set(url, result);
+    if (this.urlCache.size >= 2000) {
+      const firstKey = this.urlCache.keys().next().value;
+      if (firstKey !== undefined)
+        this.urlCache.delete(firstKey);
     }
+    this.urlCache.set(url, result);
     return result;
   }
   use(...args) {
@@ -93,7 +109,7 @@ class Web {
     } else if (args.length === 2) {
       const [path, handler] = args;
       const segments = this.getPathSegments(path);
-      const match = createPathMatcherSegments(segments);
+      const match = this.getCachedMatcher(path, segments);
       this.middlewares.push({
         path,
         pathPrefix: getStaticPrefix(path),
@@ -103,7 +119,7 @@ class Web {
     } else {
       const [method, path, handler] = args;
       const segments = this.getPathSegments(path);
-      const match = createPathMatcherSegments(segments);
+      const match = this.getCachedMatcher(path, segments);
       this.middlewares.push({
         method,
         path,
@@ -113,6 +129,14 @@ class Web {
       });
     }
     return this;
+  }
+  getCachedMatcher(path, segments) {
+    let matcher = this.matcherCache.get(path);
+    if (!matcher) {
+      matcher = createPathMatcherSegments(segments);
+      this.matcherCache.set(path, matcher);
+    }
+    return matcher;
   }
   addRoute(method, path, ...handlers) {
     this.clearCaches();
@@ -143,7 +167,7 @@ class Web {
     }
     node.handlers = handlers;
     node.method = method;
-    const matcher = createPathMatcherSegments(segments);
+    const matcher = this.getCachedMatcher(path, segments);
     this.routes.push({
       method,
       path,
@@ -152,12 +176,22 @@ class Web {
     });
   }
   match(method, path) {
+    const cacheKey = `${method}:${path}`;
+    const cached = this.routeMatchCache.get(cacheKey);
+    if (cached !== undefined)
+      return cached;
     const root = this.roots[method];
-    if (!root)
+    if (!root) {
+      this.routeMatchCache.set(cacheKey, null);
       return null;
+    }
     const segments = this.getPathSegments(path);
     if (segments.length === 0) {
-      return root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+      const result = root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+      if (this.routeMatchCache.size < 500) {
+        this.routeMatchCache.set(cacheKey, result);
+      }
+      return result;
     }
     const params = {};
     let node = root;
@@ -181,12 +215,22 @@ class Web {
         node = node.wildcardChild;
         break;
       }
+      if (this.routeMatchCache.size < 500) {
+        this.routeMatchCache.set(cacheKey, null);
+      }
       return null;
     }
     if (i === segments.length || node.segment === "*") {
       if (node.handlers) {
-        return Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+        const result = Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+        if (this.routeMatchCache.size < 500) {
+          this.routeMatchCache.set(cacheKey, result);
+        }
+        return result;
       }
+    }
+    if (this.routeMatchCache.size < 500) {
+      this.routeMatchCache.set(cacheKey, null);
     }
     return null;
   }
@@ -278,17 +322,18 @@ class Web {
   }
   createContext(req, params, parsedUrl) {
     const responseHeaders = new Headers;
+    const state = {};
     const ctx = {
       req,
       params,
-      state: {},
+      state,
       header: (name, value) => {
         responseHeaders.set(name, value);
       },
       set: (key, value) => {
-        ctx.state[key] = value;
+        state[key] = value;
       },
-      get: (key) => ctx.state[key],
+      get: (key) => state[key],
       redirect: (url, status = 302) => {
         responseHeaders.set("Location", url);
         return new Response(null, {
@@ -307,7 +352,7 @@ class Web {
         return type.includes("application/json") ? req.json() : {};
       },
       json: (data, status = 200, headers) => {
-        const allHeaders = new Headers(responseHeaders);
+        const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
         allHeaders.set("Content-Type", "application/json");
         if (headers) {
           Object.entries(headers).forEach(([name, value]) => {
@@ -320,7 +365,7 @@ class Web {
         });
       },
       text: (data, status = 200, headers) => {
-        const allHeaders = new Headers(responseHeaders);
+        const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
         allHeaders.set("Content-Type", "text/plain");
         if (headers) {
           Object.entries(headers).forEach(([name, value]) => {
@@ -333,7 +378,7 @@ class Web {
         });
       },
       html: (html, status = 200, headers) => {
-        const allHeaders = new Headers(responseHeaders);
+        const allHeaders = headers ? new Headers(responseHeaders) : responseHeaders;
         allHeaders.set("Content-Type", "text/html; charset=utf-8");
         if (headers) {
           Object.entries(headers).forEach(([name, value]) => {
@@ -365,19 +410,24 @@ class Web {
       }
       if (this.middlewares.length === 0) {
         const ctx2 = this.createContext(req, matched.params, parsedUrl);
-        for (const handler of matched.handlers || []) {
-          const result = await handler(ctx2, async () => {});
-          if (result instanceof Response) {
-            return result;
+        const handlers2 = matched.handlers;
+        if (handlers2) {
+          for (let i = 0;i < handlers2.length; i++) {
+            const result = await handlers2[i](ctx2, async () => {});
+            if (result instanceof Response) {
+              return result;
+            }
           }
         }
         return new Response("No response returned by handler", { status: 500 });
       }
       const methodMiddlewares = this.getMethodMiddlewares(method);
-      const middlewares = [];
       let finalParams = matched.params;
+      const middlewares = new Array(methodMiddlewares.length);
+      let middlewareCount = 0;
       if (methodMiddlewares.length > 0) {
-        for (const mw of methodMiddlewares) {
+        for (let i = 0;i < methodMiddlewares.length; i++) {
+          const mw = methodMiddlewares[i];
           if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
             continue;
           }
@@ -390,16 +440,28 @@ class Web {
                 finalParams = { ...finalParams, ...matchResult.params };
               }
             }
-            middlewares.push(mw.handler);
+            middlewares[middlewareCount++] = mw.handler;
           }
         }
       }
       const ctx = this.createContext(req, finalParams, parsedUrl);
-      const stack = [...middlewares, ...matched.handlers ?? []];
-      for (const fn of stack) {
-        const result = await fn(ctx, async () => {});
+      const handlers = matched.handlers;
+      const totalHandlers = middlewareCount + (handlers?.length || 0);
+      if (totalHandlers === 0) {
+        return new Response("No response returned by handler", { status: 500 });
+      }
+      for (let i = 0;i < middlewareCount; i++) {
+        const result = await middlewares[i](ctx, async () => {});
         if (result instanceof Response) {
           return result;
+        }
+      }
+      if (handlers) {
+        for (let i = 0;i < handlers.length; i++) {
+          const result = await handlers[i](ctx, async () => {});
+          if (result instanceof Response) {
+            return result;
+          }
         }
       }
       return new Response("No response returned by handler", { status: 500 });
@@ -412,11 +474,11 @@ class Web {
           text: (data, status = 500) => new Response(data, { status }),
           json: (data, status = 500) => new Response(JSON.stringify(data), {
             status,
-            headers: { "Content-Type": "application/json" }
+            headers: new Headers({ "Content-Type": "application/json" })
           }),
           html: (html, status = 500) => new Response(html, {
             status,
-            headers: { "Content-Type": "text/html" }
+            headers: new Headers({ "Content-Type": "text/html; charset=utf-8" })
           }),
           query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
           body: async () => ({}),
@@ -448,21 +510,41 @@ function getStaticPrefix(path) {
 }
 function createPathMatcherSegments(segments) {
   const segmentCount = segments.length;
+  const hasWildcard = segments[segmentCount - 1] === "*";
+  const paramPositions = [];
+  for (let i = 0;i < segmentCount; i++) {
+    if (segments[i].startsWith(":")) {
+      paramPositions.push({ index: i, name: segments[i].slice(1) });
+    }
+  }
+  const hasParams = paramPositions.length > 0;
   return (urlSegments) => {
-    if (urlSegments.length < segmentCount)
+    if (!hasWildcard && urlSegments.length !== segmentCount) {
       return { matched: false, params: {} };
+    }
+    if (hasWildcard && urlSegments.length < segmentCount - 1) {
+      return { matched: false, params: {} };
+    }
+    if (!hasParams && !hasWildcard) {
+      for (let i = 0;i < segmentCount; i++) {
+        if (segments[i] !== urlSegments[i]) {
+          return { matched: false, params: {} };
+        }
+      }
+      return { matched: true, params: {} };
+    }
     const params = {};
-    let hasParams = false;
     for (let i = 0;i < segmentCount; i++) {
       const seg = segments[i];
       const part = urlSegments[i];
-      if (seg === "*")
-        return { matched: true, params: hasParams ? params : {} };
-      if (seg?.startsWith(":")) {
+      if (seg === "*") {
+        params["*"] = urlSegments.slice(i).join("/");
+        return { matched: true, params };
+      }
+      if (seg.startsWith(":")) {
         if (!part)
           return { matched: false, params: {} };
         params[seg.slice(1)] = decodeURIComponent(part);
-        hasParams = true;
       } else if (seg !== part) {
         return { matched: false, params: {} };
       }
@@ -470,12 +552,29 @@ function createPathMatcherSegments(segments) {
     const matched = urlSegments.length === segmentCount;
     return {
       matched,
-      params: matched ? hasParams ? params : {} : {}
+      params: matched ? params : {}
     };
   };
 }
 function joinPaths(...paths) {
-  return "/" + paths.map((p) => p.replace(/^\/|\/$/g, "")).filter(Boolean).join("/");
+  let result = "/";
+  for (let i = 0;i < paths.length; i++) {
+    const p = paths[i];
+    if (p && p !== "/") {
+      let start = 0;
+      let end = p.length;
+      if (p[0] === "/")
+        start++;
+      if (p[end - 1] === "/")
+        end--;
+      if (end > start) {
+        if (result !== "/")
+          result += "/";
+        result += p.slice(start, end);
+      }
+    }
+  }
+  return result;
 }
 export {
   Web

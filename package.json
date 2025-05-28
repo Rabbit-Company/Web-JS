@@ -1,7 +1,7 @@
 {
 	"name": "@rabbit-company/web",
-	"version": "1.0.0",
-	"description": "Simple web framework",
+	"version": "0.1.0",
+	"description": "High-performance web framework",
 	"main": "./module/web.js",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
@@ -37,7 +37,8 @@
 		"@types/bun": "latest",
 		"@rabbit-company/logger": "^5.4.0",
 		"bun-plugin-dts": "^0.3.0",
-		"hono": "^4.7.10"
+		"hono": "^4.7.10",
+		"elysia": "^1.3.3"
 	},
 	"peerDependencies": {
 		"typescript": "^5"
