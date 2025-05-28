@@ -164,41 +164,56 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		const cached = this.urlCache.get(url);
 		if (cached) return cached;
 
-		// Use regex for faster parsing
-		const match = URL_PARSE_REGEX.exec(url);
-		if (!match) {
-			// Fallback for malformed URLs
-			const result = { pathname: "/", searchParams: undefined };
+		// Fast path: simple pathname-only URLs (most common case)
+		if (url[0] === "/" && !url.includes("?") && !url.includes("#")) {
+			const result = { pathname: url, searchParams: undefined };
 			if (this.urlCache.size < 1000) {
 				this.urlCache.set(url, result);
 			}
 			return result;
 		}
 
-		const [, protocol, host, pathname, search] = match;
+		// Find query string start
+		const queryStart = url.indexOf("?");
+		const hashStart = url.indexOf("#");
 
-		// Handle relative vs absolute URLs
-		let finalPathname: string;
-		if (protocol && host) {
-			// Absolute URL
-			finalPathname = pathname || "/";
+		// Determine pathname end (before query or hash)
+		let pathnameEnd = url.length;
+		if (queryStart !== -1) pathnameEnd = Math.min(pathnameEnd, queryStart);
+		if (hashStart !== -1) pathnameEnd = Math.min(pathnameEnd, hashStart);
+
+		// Extract pathname
+		let pathname: string;
+		const protocolEnd = url.indexOf("://");
+		if (protocolEnd !== -1) {
+			// Absolute URL: find first '/' after protocol
+			const hostStart = protocolEnd + 3;
+			const pathStart = url.indexOf("/", hostStart);
+			pathname = pathStart !== -1 ? url.slice(pathStart, pathnameEnd) : "/";
 		} else {
-			// Relative URL
-			finalPathname = pathname || "/";
+			// Relative URL: use from start to pathname end
+			pathname = url.slice(0, pathnameEnd) || "/";
 		}
 
-		// Only create URLSearchParams if there's actually search content
+		// Extract and parse search params only if present
 		let searchParams: URLSearchParams | undefined;
-		if (search && search.length > 0) {
-			searchParams = new URLSearchParams(search);
+		if (queryStart !== -1) {
+			const queryEnd = hashStart !== -1 ? hashStart : url.length;
+			const queryString = url.slice(queryStart + 1, queryEnd);
+			if (queryString.length > 0) {
+				searchParams = new URLSearchParams(queryString);
+			}
 		}
 
-		const result = { pathname: finalPathname, searchParams };
+		const result = { pathname, searchParams };
 
-		// Cache result (with size limit to prevent memory leaks)
-		if (this.urlCache.size < 1000) {
-			this.urlCache.set(url, result);
+		// Cache with LRU eviction when at capacity
+		if (this.urlCache.size >= 1000) {
+			// Remove oldest entry (first key in Map)
+			const firstKey = this.urlCache.keys().next().value;
+			if (firstKey !== undefined) this.urlCache.delete(firstKey);
 		}
+		this.urlCache.set(url, result);
 
 		return result;
 	}

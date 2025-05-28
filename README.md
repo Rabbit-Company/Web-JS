@@ -164,26 +164,26 @@ Benchmarks against popular frameworks:
 bun test v1.2.14 (6a363a38)
 
 tests/benchmark.test.ts:
-Web Framework (Simple): 1846.04ms for 1000000 requests (541,699 req/s) (checksum: 16917279)
-Hono Framework (Simple): 2088.42ms for 1000000 requests (478,831 req/s) (checksum: 16916727)
-Elysia Framework (Simple): 1077.81ms for 1000000 requests (927,808 req/s) (checksum: 16916772)
-✓ Comprehensive Framework Benchmarks > Simple Route Benchmark > benchmarks simple GET route [5074.96ms]
-Web Framework (Complex): 2028.02ms for 1000000 requests (493,091 req/s) (checksum: 23023000)
-Hono Framework (Complex): 2743.23ms for 1000000 requests (364,534 req/s) (checksum: 23023000)
-Elysia Framework (Complex): 1455.79ms for 1000000 requests (686,912 req/s) (checksum: 23023000)
-✓ Comprehensive Framework Benchmarks > Complex Routing Benchmark > benchmarks complex routing scenarios [6241.95ms]
-Web Framework (Middleware): 2557.90ms for 1000000 requests (390,945 req/s) (checksum: 80080024)
-Hono Framework (Middleware): 3737.22ms for 1000000 requests (267,579 req/s) (checksum: 80080024)
-Elysia Framework (Middleware): 1641.12ms for 1000000 requests (609,341 req/s) (checksum: 80080024)
-✓ Comprehensive Framework Benchmarks > Middleware Benchmark > benchmarks middleware performance [7953.94ms]
-Web Framework (Params): 2008.88ms for 1000000 requests (497,791 req/s) (checksum: 27227200)
-Hono Framework (Params): 3062.60ms for 1000000 requests (326,520 req/s) (checksum: 21421400)
-Elysia Framework (Params): 1457.14ms for 1000000 requests (686,275 req/s) (checksum: 27227200)
-✓ Comprehensive Framework Benchmarks > Parameter Extraction Benchmark > benchmarks parameter extraction performance [6544.95ms]
-Web Framework (JSON Body): 204.27ms for 50000 requests (244,771 req/s) (checksum: 5490984)
-Hono Framework (JSON Body): 214.84ms for 50000 requests (232,733 req/s) (checksum: 5490984)
-Elysia Framework (JSON Body): 148.23ms for 50000 requests (337,314 req/s) (checksum: 5490984)
-✓ Comprehensive Framework Benchmarks > JSON Body Parsing Benchmark > benchmarks JSON body parsing performance [588.00ms]
+Web Framework (Simple): 1845.70ms for 1000000 requests (541,800 req/s) (checksum: 16916753)
+Hono Framework (Simple): 2119.03ms for 1000000 requests (471,914 req/s) (checksum: 16917171)
+Elysia Framework (Simple): 1087.18ms for 1000000 requests (919,809 req/s) (checksum: 16916791)
+✓ Comprehensive Framework Benchmarks > Simple Route Benchmark > benchmarks simple GET route [5096.95ms]
+Web Framework (Complex): 2024.89ms for 1000000 requests (493,854 req/s) (checksum: 23023000)
+Hono Framework (Complex): 2736.63ms for 1000000 requests (365,412 req/s) (checksum: 23023000)
+Elysia Framework (Complex): 1459.19ms for 1000000 requests (685,313 req/s) (checksum: 23023000)
+✓ Comprehensive Framework Benchmarks > Complex Routing Benchmark > benchmarks complex routing scenarios [6235.94ms]
+Web Framework (Middleware): 2549.31ms for 1000000 requests (392,262 req/s) (checksum: 80080024)
+Hono Framework (Middleware): 3677.83ms for 1000000 requests (271,899 req/s) (checksum: 80080024)
+Elysia Framework (Middleware): 1654.94ms for 1000000 requests (604,251 req/s) (checksum: 80080024)
+✓ Comprehensive Framework Benchmarks > Middleware Benchmark > benchmarks middleware performance [7900.93ms]
+Web Framework (Params): 1973.65ms for 1000000 requests (506,676 req/s) (checksum: 27227200)
+Hono Framework (Params): 3031.84ms for 1000000 requests (329,833 req/s) (checksum: 21421400)
+Elysia Framework (Params): 1447.93ms for 1000000 requests (690,642 req/s) (checksum: 27227200)
+✓ Comprehensive Framework Benchmarks > Parameter Extraction Benchmark > benchmarks parameter extraction performance [6470.94ms]
+Web Framework (JSON Body): 202.06ms for 50000 requests (247,457 req/s) (checksum: 5490984)
+Hono Framework (JSON Body): 206.72ms for 50000 requests (241,873 req/s) (checksum: 5490984)
+Elysia Framework (JSON Body): 153.34ms for 50000 requests (326,075 req/s) (checksum: 5490984)
+✓ Comprehensive Framework Benchmarks > JSON Body Parsing Benchmark > benchmarks JSON body parsing performance [583.99ms]
 ```
 
 _Tested on Framework 16 laptop (Ryzen 7040 Series)_
