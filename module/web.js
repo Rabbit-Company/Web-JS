@@ -6,6 +6,7 @@ class TrieNode {
   wildcardChild;
   handlers;
   method;
+  routeId;
   constructor(segment) {
     this.segment = segment;
   }
@@ -21,6 +22,7 @@ class Web {
   segmentCache = new Map;
   matcherCache = new Map;
   routeMatchCache = new Map;
+  idCounter = 0;
   roots = {
     GET: new TrieNode,
     POST: new TrieNode,
@@ -33,11 +35,58 @@ class Web {
   constructor() {
     this.handle = this.handle.bind(this);
   }
+  generateId() {
+    return `${Date.now()}-${++this.idCounter}`;
+  }
   clearCaches() {
     this.methodMiddlewareCache.clear();
     this.urlCache.clear();
     this.segmentCache.clear();
     this.routeMatchCache.clear();
+  }
+  rebuildTrie() {
+    this.roots = {
+      GET: new TrieNode,
+      POST: new TrieNode,
+      PUT: new TrieNode,
+      DELETE: new TrieNode,
+      PATCH: new TrieNode,
+      OPTIONS: new TrieNode,
+      HEAD: new TrieNode
+    };
+    for (const route of this.routes) {
+      this.addRouteToTrie(route.method, route.path, route.handlers, route.id);
+    }
+  }
+  addRouteToTrie(method, path, handlers, routeId) {
+    const segments = this.getPathSegments(path);
+    let node = this.roots[method];
+    for (const segment of segments) {
+      if (segment === "*") {
+        if (!node.wildcardChild) {
+          node.wildcardChild = new TrieNode("*");
+        }
+        node = node.wildcardChild;
+        break;
+      } else if (segment.startsWith(":")) {
+        const paramName = segment.slice(1);
+        if (!node.paramChild) {
+          node.paramChild = {
+            node: new TrieNode(segment),
+            name: paramName
+          };
+        }
+        node = node.paramChild.node;
+      } else {
+        if (!node.children.has(segment)) {
+          node.children.set(segment, new TrieNode(segment));
+        }
+        node = node.children.get(segment);
+      }
+    }
+    node.handlers = handlers;
+    node.method = method;
+    node.routeId = routeId;
   }
   errorHandler;
   onError(handler) {
@@ -99,10 +148,42 @@ class Web {
     return result;
   }
   use(...args) {
+    this.addMiddleware(...args);
+    return this;
+  }
+  removeMiddleware(id) {
+    const initialLength = this.middlewares.length;
+    this.middlewares = this.middlewares.filter((mw) => mw.id !== id);
+    if (this.middlewares.length !== initialLength) {
+      this.clearCaches();
+      return true;
+    }
+    return false;
+  }
+  removeMiddlewareBy(criteria) {
+    const initialLength = this.middlewares.length;
+    if (!criteria.method && !criteria.path)
+      return 0;
+    this.middlewares = this.middlewares.filter((mw) => {
+      if (criteria.method && mw.method !== criteria.method)
+        return true;
+      if (criteria.path && mw.path !== criteria.path)
+        return true;
+      return false;
+    });
+    const removedCount = initialLength - this.middlewares.length;
+    if (removedCount > 0) {
+      this.clearCaches();
+    }
+    return removedCount;
+  }
+  addMiddleware(...args) {
     this.clearCaches();
+    const id = this.generateId();
     if (args.length === 1) {
       const [handler] = args;
       this.middlewares.push({
+        id,
         match: () => ({ matched: true, params: {} }),
         handler
       });
@@ -111,6 +192,7 @@ class Web {
       const segments = this.getPathSegments(path);
       const match = this.getCachedMatcher(path, segments);
       this.middlewares.push({
+        id,
         path,
         pathPrefix: getStaticPrefix(path),
         match: (url) => match(this.getPathSegments(url)),
@@ -121,6 +203,7 @@ class Web {
       const segments = this.getPathSegments(path);
       const match = this.getCachedMatcher(path, segments);
       this.middlewares.push({
+        id,
         method,
         path,
         pathPrefix: getStaticPrefix(path),
@@ -128,7 +211,14 @@ class Web {
         handler
       });
     }
-    return this;
+    return id;
+  }
+  getMiddlewares() {
+    return this.middlewares.map((mw) => ({
+      id: mw.id,
+      method: mw.method,
+      path: mw.path
+    }));
   }
   getCachedMatcher(path, segments) {
     let matcher = this.matcherCache.get(path);
@@ -140,40 +230,58 @@ class Web {
   }
   addRoute(method, path, ...handlers) {
     this.clearCaches();
-    const segments = this.getPathSegments(path);
-    let node = this.roots[method];
-    for (const segment of segments) {
-      if (segment === "*") {
-        if (!node.wildcardChild) {
-          node.wildcardChild = new TrieNode("*");
-        }
-        node = node.wildcardChild;
-        break;
-      } else if (segment.startsWith(":")) {
-        const paramName = segment.slice(1);
-        if (!node.paramChild) {
-          node.paramChild = {
-            node: new TrieNode(segment),
-            name: paramName
-          };
-        }
-        node = node.paramChild.node;
-      } else {
-        if (!node.children.has(segment)) {
-          node.children.set(segment, new TrieNode(segment));
-        }
-        node = node.children.get(segment);
-      }
-    }
-    node.handlers = handlers;
-    node.method = method;
-    const matcher = this.getCachedMatcher(path, segments);
+    const id = this.generateId();
+    this.addRouteToTrie(method, path, handlers, id);
+    const matcher = this.getCachedMatcher(path, this.getPathSegments(path));
     this.routes.push({
+      id,
       method,
       path,
       handlers,
       match: (url) => matcher(this.getPathSegments(url))
     });
+    return id;
+  }
+  removeRoute(id) {
+    const initialLength = this.routes.length;
+    this.routes = this.routes.filter((route) => route.id !== id);
+    if (this.routes.length !== initialLength) {
+      this.clearCaches();
+      this.rebuildTrie();
+      return true;
+    }
+    return false;
+  }
+  removeRoutesBy(criteria) {
+    const initialLength = this.routes.length;
+    if (!criteria.method && !criteria.path)
+      return 0;
+    this.routes = this.routes.filter((route) => {
+      if (criteria.method && route.method !== criteria.method)
+        return true;
+      if (criteria.path && route.path !== criteria.path)
+        return true;
+      return false;
+    });
+    const removedCount = initialLength - this.routes.length;
+    if (removedCount > 0) {
+      this.clearCaches();
+      this.rebuildTrie();
+    }
+    return removedCount;
+  }
+  getRoutes() {
+    return this.routes.map((route) => ({
+      id: route.id,
+      method: route.method,
+      path: route.path
+    }));
+  }
+  clear() {
+    this.routes = [];
+    this.middlewares = [];
+    this.clearCaches();
+    this.rebuildTrie();
   }
   match(method, path) {
     const cacheKey = `${method}:${path}`;
@@ -268,6 +376,7 @@ class Web {
       };
       this.middlewares.push({
         ...mw,
+        id: this.generateId(),
         match: prefixedMatch,
         path: path + (mw.path ?? ""),
         pathPrefix: getStaticPrefix(path + (mw.path ?? ""))

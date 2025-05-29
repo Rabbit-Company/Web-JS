@@ -10,6 +10,7 @@ A high-performance web framework built for **Bun**, **Deno** and **NodeJS** with
 
 - ⚡ **Blazing fast** trie-based router
 - 🧩 **Middleware pipeline** with path matching
+- 🔄 **Dynamic route/middleware removal** for hot-reloading
 - 🛠 **TypeScript** first-class support
 - 🧭 **Route scoping** for modular apps
 - 🔥 **Zero dependencies**
@@ -65,12 +66,8 @@ console.log('Server running at http://localhost:3000');
 ### 🛣 Routing
 
 ```js
-// Basic routes
-app.get("/path", handler);
-app.post("/path", handler);
-app.put("/path", handler);
-app.patch("/path", handler);
-app.delete("/path", handler);
+// Basic routes (chainable)
+app.get("/path", handler).post("/path", handler).put("/path", handler).patch("/path", handler).delete("/path", handler);
 
 // Dynamic routes
 app.get("/users/:id", (ctx) => {
@@ -81,23 +78,95 @@ app.get("/users/:id", (ctx) => {
 app.get("/files/*", (ctx) => {
 	return ctx.text(`Requested file: ${ctx.params["*"]}`);
 });
+
+// Routes with removal capability
+const routeId = app.addRoute("GET", "/temp", handler);
+// Remove later
+app.removeRoute(routeId);
+```
+
+### 🔄 Dynamic Route Management
+
+```js
+// Add routes that can be removed later
+const tempRoute = app.addRoute("GET", "/temporary", (ctx) => {
+	return ctx.text("This route can be removed");
+});
+
+const userRoute = app.addRoute("POST", "/users", createUserHandler);
+
+// Remove individual routes
+app.removeRoute(tempRoute);
+
+// Remove routes by criteria
+app.removeRoutesBy({ method: "GET" }); // Remove all GET routes
+app.removeRoutesBy({ path: "/users" }); // Remove all /users routes
+app.removeRoutesBy({ method: "POST", path: "/users" }); // Specific route
+
+// List all routes
+const routes = app.getRoutes();
+console.log(routes); // [{ id: '...', method: 'GET', path: '/users/:id' }]
+
+// Clear all routes and middleware
+app.clear();
 ```
 
 ### 🧩 Middleware
 
 ```js
-// Global middleware
+// Global middleware (chainable)
 app.use(async (ctx, next) => {
 	console.log("Request started");
 	await next();
 	console.log("Request completed");
 });
 
-// Path-specific middleware
-app.use("/admin", adminAuthMiddleware);
+// Path-specific middleware (chainable)
+app.use("/admin", adminAuthMiddleware)
+   .use("POST", "/users", validateUserMiddleware);
 
-// Method + path middleware
-app.use("POST", "/users", validateUserMiddleware);
+// Middleware with removal capability
+const authId = app.addMiddleware('/admin', (ctx, next) => {
+  // Authentication logic
+  await next();
+});
+
+const loggingId = app.addMiddleware(async (ctx, next) => {
+  console.log(`${ctx.req.method} ${ctx.req.url}`);
+  await next();
+});
+
+// Remove middleware
+app.removeMiddleware(authId);
+
+// Remove middleware by criteria
+app.removeMiddlewareBy({ method: 'POST' }); // Remove all POST middleware
+app.removeMiddlewareBy({ path: '/admin' }); // Remove all /admin middleware
+
+// List all middleware
+const middlewares = app.getMiddlewares();
+console.log(middlewares); // [{ id: '...', method: 'POST', path: '/users' }]
+```
+
+### 🔄 Hot Reloading Example
+
+```js
+// Perfect for development hot-reloading
+const routeManager = new Map();
+
+function hotReload(routePath, newHandler) {
+	// Remove old route if exists
+	if (routeManager.has(routePath)) {
+		app.removeRoute(routeManager.get(routePath));
+	}
+
+	// Add new route
+	const routeId = app.addRoute("GET", routePath, newHandler);
+	routeManager.set(routePath, routeId);
+}
+
+// Update route without restarting server
+hotReload("/api/users", newUserHandler);
 ```
 
 ### 🎛 Context API
@@ -125,16 +194,18 @@ ctx.header("X-Custom", "Value"); // Set response header
 ### 🗂 Route Scoping
 
 ```js
-// API v1 routes
+// API v1 routes (chainable)
 app.scope("/api/v1", (v1) => {
-	v1.get("/users", getUsers);
-	v1.post("/users", createUser);
+	v1.get("/users", getUsers).post("/users", createUser);
 });
 
 // Mount sub-apps
 const adminApp = new Web();
 adminApp.get("/dashboard", dashboardHandler);
 app.route("/admin", adminApp);
+
+// Scoped routes can still be removed by criteria
+app.removeRoutesBy({ path: "/api/v1/users" });
 ```
 
 ### 🛡 Error Handling
@@ -155,6 +226,38 @@ app.get("/danger", async (ctx) => {
 	}
 });
 ```
+
+### 🔧 API Reference
+
+#### Route Management
+
+- `get(path, ...handlers)` - Add GET route (chainable)
+- `post(path, ...handlers)` - Add POST route (chainable)
+- `put(path, ...handlers)` - Add PUT route (chainable)
+- `patch(path, ...handlers)` - Add PATCH route (chainable)
+- `delete(path, ...handlers)` - Add DELETE route (chainable)
+- `options(path, ...handlers)` - Add OPTIONS route (chainable)
+- `head(path, ...handlers)` - Add HEAD route (chainable)
+- `addRoute(method, path, ...handlers)` - Add route with ID return
+- `removeRoute(id)` - Remove route by ID
+- `removeRoutesBy(criteria)` - Remove routes by method/path
+- `getRoutes()` - List all routes with metadata
+
+#### Middleware Management
+
+- `use(...args)` - Add middleware (chainable)
+- `addMiddleware(...args)` - Add middleware with ID return
+- `removeMiddleware(id)` - Remove middleware by ID
+- `removeMiddlewareBy(criteria)` - Remove middleware by method/path
+- `getMiddlewares()` - List all middleware with metadata
+
+#### Application Management
+
+- `scope(path, callback)` - Create scoped sub-application
+- `route(prefix, subApp)` - Mount sub-application
+- `clear()` - Remove all routes and middleware
+- `onError(handler)` - Set global error handler
+- `handle(request)` - Main request handler
 
 ### ⚡ Performance
 

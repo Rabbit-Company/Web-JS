@@ -258,6 +258,7 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
  * - Built-in caching for improved performance
  * - Support for all standard HTTP methods
  * - Parameter extraction and wildcard routes
+ * - Dynamic route and middleware removal
  *
  * @template T - The type of the context state object that will be shared across middleware
  *
@@ -295,6 +296,8 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	private matcherCache;
 	/** Cache for frequently matched routes */
 	private routeMatchCache;
+	/** Counter for generating unique IDs */
+	private idCounter;
 	/** Trie roots for each HTTP method for fast route matching */
 	private roots;
 	/**
@@ -302,10 +305,25 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	 */
 	constructor();
 	/**
+	 * Generates a unique ID for routes and middleware
+	 * @private
+	 */
+	private generateId;
+	/**
 	 * Clears all internal caches. Called automatically when routes or middleware are modified.
 	 * @private
 	 */
 	private clearCaches;
+	/**
+	 * Rebuilds the trie structure from scratch. Used after route removal.
+	 * @private
+	 */
+	private rebuildTrie;
+	/**
+	 * Adds a route to the trie structure (internal method)
+	 * @private
+	 */
+	private addRouteToTrie;
 	/** Error handler function for handling uncaught errors */
 	private errorHandler?;
 	/**
@@ -383,6 +401,97 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 		Middleware<T>
 	]): this;
 	/**
+	 * Removes middleware by its ID.
+	 *
+	 * @param id - The middleware ID returned from the use() method
+	 * @returns true if middleware was found and removed, false otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const middlewareId = app.use('/api', authMiddleware);
+	 *
+	 * // Later remove it
+	 * const removed = app.removeMiddleware(middlewareId);
+	 * console.log(removed ? 'Middleware removed' : 'Middleware not found');
+	 * ```
+	 */
+	removeMiddleware(id: string): boolean;
+	/**
+	 * Removes all middleware matching the given criteria.
+	 *
+	 * @param criteria - Object with optional method and/or path to match
+	 * @returns Number of middleware items removed
+	 *
+	 * @example
+	 * ```typescript
+	 * // Remove all middleware for a specific path
+	 * const removed = app.removeMiddlewareBy({ path: '/api' });
+	 *
+	 * // Remove all POST middleware
+	 * app.removeMiddlewareBy({ method: 'POST' });
+	 *
+	 * // Remove specific method and path combination
+	 * app.removeMiddlewareBy({ method: 'GET', path: '/users' });
+	 * ```
+	 */
+	removeMiddlewareBy(criteria: {
+		method?: Method;
+		path?: string;
+	}): number;
+	/**
+	 * Adds middleware using the specified pattern and returns an ID for later removal.
+	 * This is an alternative to use() that returns an ID instead of the Web instance.
+	 *
+	 * @param args - Variable arguments for different middleware registration patterns
+	 * @returns The middleware ID for later removal
+	 *
+	 * @example
+	 * ```typescript
+	 * // Global middleware
+	 * const globalId = app.addMiddleware(async (ctx, next) => {
+	 *   console.log(`${ctx.req.method} ${ctx.req.url}`);
+	 *   await next();
+	 * });
+	 *
+	 * // Path-specific middleware
+	 * const pathId = app.addMiddleware('/api', async (ctx, next) => {
+	 *   ctx.set('apiVersion', '1.0');
+	 *   await next();
+	 * });
+	 *
+	 * // Remove middleware later
+	 * app.removeMiddleware(globalId);
+	 * ```
+	 */
+	addMiddleware(...args: [
+		Middleware<T>
+	] | [
+		string,
+		Middleware<T>
+	] | [
+		Method,
+		string,
+		Middleware<T>
+	]): string;
+	/**
+	 * Gets all registered middleware with their IDs and metadata.
+	 *
+	 * @returns Array of middleware information objects
+	 *
+	 * @example
+	 * ```typescript
+	 * const middlewares = app.getMiddlewares();
+	 * middlewares.forEach(mw => {
+	 *   console.log(`ID: ${mw.id}, Method: ${mw.method || 'ALL'}, Path: ${mw.path || 'ALL'}`);
+	 * });
+	 * ```
+	 */
+	getMiddlewares(): Array<{
+		id: string;
+		method?: Method;
+		path?: string;
+	}>;
+	/**
 	 * Gets or creates a cached matcher function for the given path pattern
 	 * @private
 	 */
@@ -393,15 +502,88 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	 * @param method - HTTP method (GET, POST, etc.)
 	 * @param path - URL path pattern (supports :param and * wildcards)
 	 * @param handlers - One or more middleware handlers for this route
+	 * @returns The route ID for later removal
 	 *
 	 * @example
 	 * ```typescript
-	 * app.addRoute('GET', '/users/:id', async (ctx) => {
+	 * const routeId = app.addRoute('GET', '/users/:id', async (ctx) => {
 	 *   return ctx.json({ id: ctx.params.id });
+	 * });
+	 *
+	 * // Remove it later
+	 * app.removeRoute(routeId);
+	 * ```
+	 */
+	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]): string;
+	/**
+	 * Removes a route by its ID.
+	 *
+	 * @param id - The route ID returned from route registration methods
+	 * @returns true if route was found and removed, false otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const routeId = app.get('/users/:id', getUserHandler);
+	 *
+	 * // Later remove it
+	 * const removed = app.removeRoute(routeId);
+	 * console.log(removed ? 'Route removed' : 'Route not found');
+	 * ```
+	 */
+	removeRoute(id: string): boolean;
+	/**
+	 * Removes all routes matching the given criteria.
+	 *
+	 * @param criteria - Object with optional method and/or path to match
+	 * @returns Number of routes removed
+	 *
+	 * @example
+	 * ```typescript
+	 * // Remove all routes for a specific path
+	 * const removed = app.removeRoutesBy({ path: '/users/:id' });
+	 *
+	 * // Remove all GET routes
+	 * app.removeRoutesBy({ method: 'GET' });
+	 *
+	 * // Remove specific method and path combination
+	 * app.removeRoutesBy({ method: 'POST', path: '/users' });
+	 * ```
+	 */
+	removeRoutesBy(criteria: {
+		method?: Method;
+		path?: string;
+	}): number;
+	/**
+	 * Gets all registered routes with their IDs and metadata.
+	 *
+	 * @returns Array of route information objects
+	 *
+	 * @example
+	 * ```typescript
+	 * const routes = app.getRoutes();
+	 * routes.forEach(route => {
+	 *   console.log(`ID: ${route.id}, ${route.method} ${route.path}`);
 	 * });
 	 * ```
 	 */
-	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]): void;
+	getRoutes(): Array<{
+		id: string;
+		method: Method;
+		path: string;
+	}>;
+	/**
+	 * Removes all routes and middleware, effectively resetting the application.
+	 *
+	 * @example
+	 * ```typescript
+	 * // Clear everything and start fresh
+	 * app.clear();
+	 *
+	 * // Now add new routes
+	 * app.get('/', handler);
+	 * ```
+	 */
+	clear(): void;
 	/**
 	 * Matches a method and path against the trie structure to find handlers and extract parameters.
 	 *

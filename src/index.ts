@@ -17,6 +17,8 @@ class TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
 	handlers?: Middleware<T>[];
 	/** HTTP method this node handles (GET, POST, etc.) */
 	method?: Method;
+	/** Unique identifier for tracking this route for removal */
+	routeId?: string;
 
 	/**
 	 * Creates a new TrieNode
@@ -41,6 +43,7 @@ const EMPTY_SEARCH_PARAMS = new URLSearchParams();
  * - Built-in caching for improved performance
  * - Support for all standard HTTP methods
  * - Parameter extraction and wildcard routes
+ * - Dynamic route and middleware removal
  *
  * @template T - The type of the context state object that will be shared across middleware
  *
@@ -65,9 +68,9 @@ const EMPTY_SEARCH_PARAMS = new URLSearchParams();
  */
 export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	/** Array of all registered routes */
-	private routes: Route<T>[] = [];
+	private routes: (Route<T> & { id: string })[] = [];
 	/** Array of all registered middleware */
-	private middlewares: MiddlewareRoute<T>[] = [];
+	private middlewares: (MiddlewareRoute<T> & { id: string })[] = [];
 	/** Cache for method-specific middleware to avoid filtering on each request */
 	private methodMiddlewareCache = new Map<Method, MiddlewareRoute<T>[]>();
 	/** Cache for parsed URLs to avoid repeated parsing */
@@ -78,6 +81,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	private matcherCache = new Map<string, (urlSegments: string[]) => MatchResult>();
 	/** Cache for frequently matched routes */
 	private routeMatchCache = new Map<string, { handlers?: Middleware<T>[]; params: Record<string, string> } | null>();
+	/** Counter for generating unique IDs */
+	private idCounter = 0;
 
 	/** Trie roots for each HTTP method for fast route matching */
 	private roots: Record<Method, TrieNode<T>> = {
@@ -98,6 +103,14 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	/**
+	 * Generates a unique ID for routes and middleware
+	 * @private
+	 */
+	private generateId(): string {
+		return `${Date.now()}-${++this.idCounter}`;
+	}
+
+	/**
 	 * Clears all internal caches. Called automatically when routes or middleware are modified.
 	 * @private
 	 */
@@ -106,6 +119,65 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		this.urlCache.clear();
 		this.segmentCache.clear();
 		this.routeMatchCache.clear();
+	}
+
+	/**
+	 * Rebuilds the trie structure from scratch. Used after route removal.
+	 * @private
+	 */
+	private rebuildTrie() {
+		// Clear all trie roots
+		this.roots = {
+			GET: new TrieNode(),
+			POST: new TrieNode(),
+			PUT: new TrieNode(),
+			DELETE: new TrieNode(),
+			PATCH: new TrieNode(),
+			OPTIONS: new TrieNode(),
+			HEAD: new TrieNode(),
+		};
+
+		// Rebuild from remaining routes
+		for (const route of this.routes) {
+			this.addRouteToTrie(route.method, route.path, route.handlers, route.id);
+		}
+	}
+
+	/**
+	 * Adds a route to the trie structure (internal method)
+	 * @private
+	 */
+	private addRouteToTrie(method: Method, path: string, handlers: Middleware<T>[], routeId: string) {
+		const segments = this.getPathSegments(path);
+		let node = this.roots[method];
+
+		for (const segment of segments) {
+			if (segment === "*") {
+				if (!node.wildcardChild) {
+					node.wildcardChild = new TrieNode("*");
+				}
+				node = node.wildcardChild;
+				break;
+			} else if (segment.startsWith(":")) {
+				const paramName = segment.slice(1);
+				if (!node.paramChild) {
+					node.paramChild = {
+						node: new TrieNode(segment),
+						name: paramName,
+					};
+				}
+				node = node.paramChild.node;
+			} else {
+				if (!node.children.has(segment)) {
+					node.children.set(segment, new TrieNode(segment));
+				}
+				node = node.children.get(segment)!;
+			}
+		}
+
+		node.handlers = handlers;
+		node.method = method;
+		node.routeId = routeId;
 	}
 
 	/** Error handler function for handling uncaught errors */
@@ -251,11 +323,105 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * ```
 	 */
 	use(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): this {
+		this.addMiddleware(...args);
+		return this;
+	}
+
+	/**
+	 * Removes middleware by its ID.
+	 *
+	 * @param id - The middleware ID returned from the use() method
+	 * @returns true if middleware was found and removed, false otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const middlewareId = app.use('/api', authMiddleware);
+	 *
+	 * // Later remove it
+	 * const removed = app.removeMiddleware(middlewareId);
+	 * console.log(removed ? 'Middleware removed' : 'Middleware not found');
+	 * ```
+	 */
+	removeMiddleware(id: string): boolean {
+		const initialLength = this.middlewares.length;
+		this.middlewares = this.middlewares.filter((mw) => mw.id !== id);
+
+		if (this.middlewares.length !== initialLength) {
+			this.clearCaches();
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Removes all middleware matching the given criteria.
+	 *
+	 * @param criteria - Object with optional method and/or path to match
+	 * @returns Number of middleware items removed
+	 *
+	 * @example
+	 * ```typescript
+	 * // Remove all middleware for a specific path
+	 * const removed = app.removeMiddlewareBy({ path: '/api' });
+	 *
+	 * // Remove all POST middleware
+	 * app.removeMiddlewareBy({ method: 'POST' });
+	 *
+	 * // Remove specific method and path combination
+	 * app.removeMiddlewareBy({ method: 'GET', path: '/users' });
+	 * ```
+	 */
+	removeMiddlewareBy(criteria: { method?: Method; path?: string }): number {
+		const initialLength = this.middlewares.length;
+
+		if (!criteria.method && !criteria.path) return 0;
+
+		this.middlewares = this.middlewares.filter((mw) => {
+			if (criteria.method && mw.method !== criteria.method) return true;
+			if (criteria.path && mw.path !== criteria.path) return true;
+			return false;
+		});
+
+		const removedCount = initialLength - this.middlewares.length;
+		if (removedCount > 0) {
+			this.clearCaches();
+		}
+		return removedCount;
+	}
+
+	/**
+	 * Adds middleware using the specified pattern and returns an ID for later removal.
+	 * This is an alternative to use() that returns an ID instead of the Web instance.
+	 *
+	 * @param args - Variable arguments for different middleware registration patterns
+	 * @returns The middleware ID for later removal
+	 *
+	 * @example
+	 * ```typescript
+	 * // Global middleware
+	 * const globalId = app.addMiddleware(async (ctx, next) => {
+	 *   console.log(`${ctx.req.method} ${ctx.req.url}`);
+	 *   await next();
+	 * });
+	 *
+	 * // Path-specific middleware
+	 * const pathId = app.addMiddleware('/api', async (ctx, next) => {
+	 *   ctx.set('apiVersion', '1.0');
+	 *   await next();
+	 * });
+	 *
+	 * // Remove middleware later
+	 * app.removeMiddleware(globalId);
+	 * ```
+	 */
+	addMiddleware(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): string {
 		this.clearCaches();
+		const id = this.generateId();
 
 		if (args.length === 1) {
 			const [handler] = args;
 			this.middlewares.push({
+				id,
 				match: () => ({ matched: true, params: {} }),
 				handler,
 			});
@@ -264,6 +430,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const segments = this.getPathSegments(path);
 			const match = this.getCachedMatcher(path, segments);
 			this.middlewares.push({
+				id,
 				path,
 				pathPrefix: getStaticPrefix(path),
 				match: (url) => match(this.getPathSegments(url)),
@@ -274,6 +441,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const segments = this.getPathSegments(path);
 			const match = this.getCachedMatcher(path, segments);
 			this.middlewares.push({
+				id,
 				method,
 				path,
 				pathPrefix: getStaticPrefix(path),
@@ -281,7 +449,28 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				handler,
 			});
 		}
-		return this;
+		return id;
+	}
+
+	/**
+	 * Gets all registered middleware with their IDs and metadata.
+	 *
+	 * @returns Array of middleware information objects
+	 *
+	 * @example
+	 * ```typescript
+	 * const middlewares = app.getMiddlewares();
+	 * middlewares.forEach(mw => {
+	 *   console.log(`ID: ${mw.id}, Method: ${mw.method || 'ALL'}, Path: ${mw.path || 'ALL'}`);
+	 * });
+	 * ```
+	 */
+	getMiddlewares(): Array<{ id: string; method?: Method; path?: string }> {
+		return this.middlewares.map((mw) => ({
+			id: mw.id,
+			method: mw.method,
+			path: mw.path,
+		}));
 	}
 
 	/**
@@ -303,54 +492,138 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @param method - HTTP method (GET, POST, etc.)
 	 * @param path - URL path pattern (supports :param and * wildcards)
 	 * @param handlers - One or more middleware handlers for this route
+	 * @returns The route ID for later removal
 	 *
 	 * @example
 	 * ```typescript
-	 * app.addRoute('GET', '/users/:id', async (ctx) => {
+	 * const routeId = app.addRoute('GET', '/users/:id', async (ctx) => {
 	 *   return ctx.json({ id: ctx.params.id });
 	 * });
+	 *
+	 * // Remove it later
+	 * app.removeRoute(routeId);
 	 * ```
 	 */
-	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]) {
+	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]): string {
 		this.clearCaches();
+		const id = this.generateId();
 
-		const segments = this.getPathSegments(path);
-		let node = this.roots[method];
+		this.addRouteToTrie(method, path, handlers, id);
 
-		for (const segment of segments) {
-			if (segment === "*") {
-				if (!node.wildcardChild) {
-					node.wildcardChild = new TrieNode("*");
-				}
-				node = node.wildcardChild;
-				break;
-			} else if (segment.startsWith(":")) {
-				const paramName = segment.slice(1);
-				if (!node.paramChild) {
-					node.paramChild = {
-						node: new TrieNode(segment),
-						name: paramName,
-					};
-				}
-				node = node.paramChild.node;
-			} else {
-				if (!node.children.has(segment)) {
-					node.children.set(segment, new TrieNode(segment));
-				}
-				node = node.children.get(segment)!;
-			}
-		}
-
-		node.handlers = handlers;
-		node.method = method;
-
-		const matcher = this.getCachedMatcher(path, segments);
+		const matcher = this.getCachedMatcher(path, this.getPathSegments(path));
 		this.routes.push({
+			id,
 			method,
 			path,
 			handlers,
 			match: (url) => matcher(this.getPathSegments(url)),
 		});
+
+		return id;
+	}
+
+	/**
+	 * Removes a route by its ID.
+	 *
+	 * @param id - The route ID returned from route registration methods
+	 * @returns true if route was found and removed, false otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const routeId = app.get('/users/:id', getUserHandler);
+	 *
+	 * // Later remove it
+	 * const removed = app.removeRoute(routeId);
+	 * console.log(removed ? 'Route removed' : 'Route not found');
+	 * ```
+	 */
+	removeRoute(id: string): boolean {
+		const initialLength = this.routes.length;
+		this.routes = this.routes.filter((route) => route.id !== id);
+
+		if (this.routes.length !== initialLength) {
+			this.clearCaches();
+			this.rebuildTrie();
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Removes all routes matching the given criteria.
+	 *
+	 * @param criteria - Object with optional method and/or path to match
+	 * @returns Number of routes removed
+	 *
+	 * @example
+	 * ```typescript
+	 * // Remove all routes for a specific path
+	 * const removed = app.removeRoutesBy({ path: '/users/:id' });
+	 *
+	 * // Remove all GET routes
+	 * app.removeRoutesBy({ method: 'GET' });
+	 *
+	 * // Remove specific method and path combination
+	 * app.removeRoutesBy({ method: 'POST', path: '/users' });
+	 * ```
+	 */
+	removeRoutesBy(criteria: { method?: Method; path?: string }): number {
+		const initialLength = this.routes.length;
+
+		if (!criteria.method && !criteria.path) return 0;
+
+		this.routes = this.routes.filter((route) => {
+			if (criteria.method && route.method !== criteria.method) return true;
+			if (criteria.path && route.path !== criteria.path) return true;
+			return false;
+		});
+
+		const removedCount = initialLength - this.routes.length;
+		if (removedCount > 0) {
+			this.clearCaches();
+			this.rebuildTrie();
+		}
+		return removedCount;
+	}
+
+	/**
+	 * Gets all registered routes with their IDs and metadata.
+	 *
+	 * @returns Array of route information objects
+	 *
+	 * @example
+	 * ```typescript
+	 * const routes = app.getRoutes();
+	 * routes.forEach(route => {
+	 *   console.log(`ID: ${route.id}, ${route.method} ${route.path}`);
+	 * });
+	 * ```
+	 */
+	getRoutes(): Array<{ id: string; method: Method; path: string }> {
+		return this.routes.map((route) => ({
+			id: route.id,
+			method: route.method,
+			path: route.path,
+		}));
+	}
+
+	/**
+	 * Removes all routes and middleware, effectively resetting the application.
+	 *
+	 * @example
+	 * ```typescript
+	 * // Clear everything and start fresh
+	 * app.clear();
+	 *
+	 * // Now add new routes
+	 * app.get('/', handler);
+	 * ```
+	 */
+	clear(): void {
+		this.routes = [];
+		this.middlewares = [];
+		this.clearCaches();
+		this.rebuildTrie();
 	}
 
 	/**
@@ -517,6 +790,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			this.middlewares.push({
 				...mw,
+				id: this.generateId(), // Generate new ID for the parent app
 				match: prefixedMatch,
 				path: path + (mw.path ?? ""),
 				pathPrefix: getStaticPrefix(path + (mw.path ?? "")),
