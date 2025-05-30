@@ -43,5 +43,7 @@
 	"peerDependencies": {
 		"typescript": "^5"
 	},
-	"dependencies": {}
+	"dependencies": {
+		"@rabbit-company/rate-limiter": "^3.0.0"
+	}
 }

@@ -13,8 +13,6 @@ A high-performance web framework built for **Bun**, **Deno** and **NodeJS** with
 - 🔄 **Dynamic route/middleware removal** for hot-reloading
 - 🛠 **TypeScript** first-class support
 - 🧭 **Route scoping** for modular apps
-- 🔥 **Zero dependencies**
-- 📦 **<10kB** minified
 - 🧵 **Async/await** ready
 - 🛡 **Error handling** built-in
 

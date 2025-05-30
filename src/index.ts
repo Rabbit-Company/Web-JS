@@ -44,6 +44,7 @@ const EMPTY_SEARCH_PARAMS = new URLSearchParams();
  * - Support for all standard HTTP methods
  * - Parameter extraction and wildcard routes
  * - Dynamic route and middleware removal
+ * - Custom error and 404 handlers
  *
  * @template T - The type of the context state object that will be shared across middleware
  *
@@ -183,6 +184,9 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	/** Error handler function for handling uncaught errors */
 	private errorHandler?: (err: Error, ctx: Context<T>) => Response | Promise<Response>;
 
+	/** 404 Not Found handler function */
+	private notFoundHandler?: (ctx: Context<T>) => Response | Promise<Response>;
+
 	/**
 	 * Sets a global error handler for the application.
 	 * This handler will be called whenever an unhandled error occurs during request processing.
@@ -200,6 +204,56 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 */
 	onError(handler: (err: Error, ctx: Context<T>) => Response | Promise<Response>): this {
 		this.errorHandler = handler;
+		return this;
+	}
+
+	/**
+	 * Sets a custom 404 Not Found handler for the application.
+	 * This handler will be called whenever a request doesn't match any registered routes.
+	 *
+	 * @param handler - Function that takes a context and returns a Response
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Simple text response
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.text('Page not found', 404);
+	 * });
+	 *
+	 * // JSON response with request details
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.json({
+	 *     error: 'Not Found',
+	 *     path: ctx.req.url,
+	 *     method: ctx.req.method
+	 *   }, 404);
+	 * });
+	 *
+	 * // HTML response with custom 404 page
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.html(`
+	 *     <!DOCTYPE html>
+	 *     <html>
+	 *       <head>
+	 *         <title>404 - Page Not Found</title>
+	 *         <style>
+	 *           body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+	 *           h1 { color: #ff6b6b; }
+	 *         </style>
+	 *       </head>
+	 *       <body>
+	 *         <h1>404 - Page Not Found</h1>
+	 *         <p>The page you're looking for doesn't exist.</p>
+	 *         <a href="/">Go back home</a>
+	 *       </body>
+	 *     </html>
+	 *   `, 404);
+	 * });
+	 * ```
+	 */
+	onNotFound(handler: (ctx: Context<T>) => Response | Promise<Response>): this {
+		this.notFoundHandler = handler;
 		return this;
 	}
 
@@ -509,6 +563,24 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		const id = this.generateId();
 
 		this.addRouteToTrie(method, path, handlers, id);
+
+		// Automatically register OPTIONS route for CORS if not already present
+		const hasOptionsRoute = this.routes.some((route) => route.method === "OPTIONS" && route.path === path);
+		if (method !== "OPTIONS" && !hasOptionsRoute) {
+			const optionsId = this.generateId();
+			this.addRouteToTrie(
+				"OPTIONS",
+				path,
+				[
+					async (ctx) => {
+						const response = new Response(null, { status: 204 });
+						// CORS headers will be added by the CORS middleware
+						return response;
+					},
+				],
+				optionsId
+			);
+		}
 
 		const matcher = this.getCachedMatcher(path, this.getPathSegments(path));
 		this.routes.push({
@@ -1118,6 +1190,19 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	/**
+	 * Creates a 404 Not Found response using the custom handler if set.
+	 * @private
+	 */
+	private async createNotFoundResponse(req: Request, parsedUrl: { pathname: string; searchParams?: URLSearchParams }): Promise<Response> {
+		if (this.notFoundHandler) {
+			// Create a minimal context for the 404 handler
+			const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl);
+			return this.notFoundHandler(ctx);
+		}
+		return new Response("Not Found", { status: 404 });
+	}
+
+	/**
 	 * Main request handler that processes incoming requests through the middleware chain and route handlers.
 	 * This method implements several optimization paths for different scenarios:
 	 * - Ultra-fast path: no middleware, no parameters, single handler
@@ -1150,7 +1235,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			// Match route first
 			const matched = this.match(method, path);
 			if (!matched) {
-				return new Response("Not Found", { status: 404 });
+				return this.createNotFoundResponse(req, parsedUrl);
 			}
 
 			// Ultra-fast path: no middlewares, no parameters, single handler
@@ -1217,29 +1302,59 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			// Execute middleware and handlers
 			const handlers = matched.handlers;
-			const totalHandlers = middlewareCount + (handlers?.length || 0);
 
-			if (totalHandlers === 0) {
-				return new Response("No response returned by handler", { status: 500 });
-			}
+			// Build the complete middleware chain
+			const allMiddleware: Middleware<T>[] = [];
 
-			// Inline execution for better performance
+			// Add middlewares first
 			for (let i = 0; i < middlewareCount; i++) {
-				const result = await middlewares[i](ctx, async () => {});
-				if (result instanceof Response) {
-					return result;
-				}
+				allMiddleware.push(middlewares[i]);
 			}
 
+			// Add route handlers
 			if (handlers) {
-				for (let i = 0; i < handlers.length; i++) {
-					const result = await handlers[i](ctx, async () => {});
-					if (result instanceof Response) {
-						return result;
-					}
-				}
+				allMiddleware.push(...handlers);
 			}
 
+			// If there are no handlers at all (neither middleware nor route handlers)
+			if (allMiddleware.length === 0) {
+				return this.createNotFoundResponse(req, parsedUrl);
+			}
+
+			// Create the composed middleware chain
+			let currentIndex = 0;
+			let response: any = undefined;
+
+			const dispatch = async (): Promise<Response | void> => {
+				if (currentIndex >= allMiddleware.length) {
+					return;
+				}
+
+				const middleware = allMiddleware[currentIndex++];
+				const result = await middleware(ctx, dispatch);
+
+				// Store the response if one was returned
+				if (result instanceof Response) {
+					response = result;
+				}
+
+				return result;
+			};
+
+			// Start the middleware chain
+			await dispatch();
+
+			if (response instanceof Response) {
+				return response;
+			}
+
+			// If no response was returned, check if we had actual route handlers
+			// If we only had middleware (no route handlers), this is a 404
+			if (!handlers || handlers.length === 0) {
+				return this.createNotFoundResponse(req, parsedUrl);
+			}
+
+			// If we had route handlers but they didn't return a response, that's a 500
 			return new Response("No response returned by handler", { status: 500 });
 		} catch (err) {
 			if (this.errorHandler) {
