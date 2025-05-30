@@ -1,21 +1,32 @@
 {
-	"name": "@rabbit-company/web",
-	"version": "0.2.0",
-	"description": "High-performance web framework",
-	"main": "./module/web.js",
+	"name": "@rabbit-company/web-monorepo",
+	"version": "0.3.0",
+	"description": "High-performance web framework monorepo",
+	"private": true,
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
 	"funding": "https://rabbit-company.com/donation",
 	"author": "Rabbit Company <info@rabbit-company.com>",
 	"license": "MIT",
-	"private": false,
-	"scripts": {
-		"build": "bun run build.ts"
-	},
-	"files": [
-		"module/web.js",
-		"module/web.d.ts"
+	"workspaces": [
+		"packages/*"
 	],
+	"scripts": {
+		"build": "bun run build.ts",
+		"build:core": "cd packages/core && bun run build",
+		"build:middleware": "cd packages/middleware && bun run build",
+		"build:all": "bun run build:core && bun run build:middleware",
+		"test": "bun test",
+		"test:core": "cd packages/core && bun test",
+		"test:middleware": "cd packages/middleware && bun test",
+		"dev": "bun --watch run build.ts",
+		"dev:core": "cd packages/core && bun run dev",
+		"dev:middleware": "cd packages/middleware && bun run dev",
+		"clean": "rm -rf ./packages/core/dist/ ./packages/middleware/dist/",
+		"publish:core": "cd packages/core && bun publish --access public",
+		"publish:middleware": "cd packages/middleware && bun publish --access public",
+		"publish:all": "bun run publish:core && bun run publish:middleware"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Rabbit-Company/Web-JS.git"
@@ -31,7 +42,9 @@
 		"api",
 		"web",
 		"framework",
-		"security"
+		"security",
+		"middleware",
+		"monorepo"
 	],
 	"devDependencies": {
 		"@types/bun": "latest",

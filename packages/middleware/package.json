@@ -1,0 +1,85 @@
+{
+	"name": "@rabbit-company/web-middleware",
+	"version": "0.3.0",
+	"description": "Official middleware collection for Rabbit Company Web Framework",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"type": "module",
+	"homepage": "https://github.com/Rabbit-Company/Web-JS",
+	"funding": "https://rabbit-company.com/donation",
+	"author": "Rabbit Company <info@rabbit-company.com>",
+	"license": "MIT",
+	"private": false,
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		},
+		"./auth": {
+			"types": "./dist/auth/index.d.ts",
+			"import": "./dist/auth/index.js"
+		},
+		"./auth/bearer": {
+			"types": "./dist/auth/bearer.d.ts",
+			"import": "./dist/auth/bearer.js"
+		},
+		"./auth/basic": {
+			"types": "./dist/auth/basic.d.ts",
+			"import": "./dist/auth/basic.js"
+		},
+		"./security": {
+			"types": "./dist/security/index.d.ts",
+			"import": "./dist/security/index.js"
+		},
+		"./security/cors": {
+			"types": "./dist/security/cors.d.ts",
+			"import": "./dist/security/cors.js"
+		},
+		"./security/rate-limit": {
+			"types": "./dist/security/rate-limit.d.ts",
+			"import": "./dist/security/rate-limit.js"
+		}
+	},
+	"scripts": {
+		"build": "cd ../../ && bun run build",
+		"dev": "bun --watch run build",
+		"test": "bun test",
+		"prepublishOnly": "bun run build"
+	},
+	"files": [
+		"dist/",
+		"README.md"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Rabbit-Company/Web-JS.git",
+		"directory": "packages/middleware"
+	},
+	"contributors": [
+		"Rabbit Company <info@rabbit-company.com> (https://github.com/Rabbit-Company)"
+	],
+	"bugs": {
+		"url": "https://github.com/Rabbit-Company/Web-JS/issues",
+		"email": "info@rabbit-company.com"
+	},
+	"keywords": [
+		"middleware",
+		"auth",
+		"security",
+		"cors",
+		"rate-limit",
+		"web-framework",
+		"rabbit-company"
+	],
+	"peerDependencies": {
+		"@rabbit-company/web": "^0.2.0",
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@rabbit-company/rate-limiter": "^3.0.0"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
+}

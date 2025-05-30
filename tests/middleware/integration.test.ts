@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web } from "../../src";
-import { cors, basicAuth, rateLimit } from "../../src/middleware";
+import { Web } from "../../packages/core";
+import { cors, basicAuth, rateLimit } from "../../packages/middleware/src";
 
 describe("Middleware Integration", () => {
 	let app: Web<{ user?: any; auth?: any }>;
@@ -99,7 +99,7 @@ describe("Middleware Integration", () => {
 			cors({
 				origin: "https://app.example.com",
 				credentials: true,
-				allowedHeaders: ["Content-Type", "Authorization"],
+				allowHeaders: ["Content-Type", "Authorization"],
 			})
 		);
 

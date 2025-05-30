@@ -13,7 +13,37 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Publish package
-        run: npx jsr publish
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build packages
+        run: bun run build
+
+      - name: Publish Core Package to JSR
+        working-directory: packages/core
+        run: |
+          echo "Publishing core package..."
+          npx jsr publish --allow-dirty
+        continue-on-error: false
+
+      - name: Publish Middleware Package to JSR
+        working-directory: packages/middleware
+        run: |
+          echo "Publishing middleware package..."
+          npx jsr publish --allow-dirty
+        continue-on-error: false
+
+      - name: Publish Status
+        if: success()
+        run: |
+          echo "✅ All packages published successfully to JSR!"
+          echo "📦 Core: @rabbit-company/web"
+          echo "🔧 Middleware: @rabbit-company/web-middleware"

@@ -1,4 +1,4 @@
-import type { Middleware, Context } from "../../types";
+import type { Context, Middleware } from "../../../core/src";
 
 /**
  * Options for configuring the Bearer Token Authentication middleware.

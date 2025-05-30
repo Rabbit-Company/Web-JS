@@ -1,4 +1,4 @@
-import type { Middleware, Context } from "../types";
+import type { Context, Middleware } from "../../../core/src";
 
 /**
  * Options to configure the CORS middleware behavior.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { Web } from "../src/index";
+import { Web } from "../packages/core/src";
 
 function mockRequest(path: string, method = "GET", headers: Record<string, string> = {}) {
 	return new Request(`http://localhost${path}`, {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web } from "../../src";
-import { cors } from "../../src/middleware/cors";
+import { Web } from "../../packages/core/src";
+import { cors } from "../../packages/middleware/src/security/cors";
 
 describe("CORS Middleware", () => {
 	let app: Web;

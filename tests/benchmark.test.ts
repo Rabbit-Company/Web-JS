@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { Web } from "../src/index";
+import { Web } from "../packages/core/src";
 import { Hono } from "hono";
 import { Elysia } from "elysia";
 

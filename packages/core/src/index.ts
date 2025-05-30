@@ -1528,3 +1528,5 @@ function joinPaths(...paths: string[]) {
 	}
 	return result;
 }
+
+export type * from "./types";

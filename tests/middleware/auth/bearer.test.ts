@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bearerAuth } from "../../../src/middleware";
-import { Web } from "../../../src";
+import { bearerAuth } from "../../../packages/middleware";
+import { Web } from "../../../packages/core";
 
 function mockRequest(path: string, method = "GET", headers: Record<string, string> = {}) {
 	return new Request(`http://localhost${path}`, {

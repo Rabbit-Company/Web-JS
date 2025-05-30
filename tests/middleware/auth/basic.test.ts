@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web } from "../../../src";
-import { basicAuth } from "../../../src/middleware/auth/basic";
+import { Web } from "../../../packages/core";
+import { basicAuth } from "../../../packages/middleware/src/auth/basic";
 
 describe("Basic Auth Middleware", () => {
 	let app: Web<{ user?: any }>;

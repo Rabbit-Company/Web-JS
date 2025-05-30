@@ -1,0 +1,58 @@
+{
+	"name": "@rabbit-company/web",
+	"version": "0.3.0",
+	"description": "High-performance web framework",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"type": "module",
+	"homepage": "https://github.com/Rabbit-Company/Web-JS",
+	"funding": "https://rabbit-company.com/donation",
+	"author": "Rabbit Company <info@rabbit-company.com>",
+	"license": "MIT",
+	"private": false,
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"scripts": {
+		"build": "cd ../../ && bun run build",
+		"dev": "bun --watch run build",
+		"test": "bun test",
+		"prepublishOnly": "bun run build"
+	},
+	"files": [
+		"dist/",
+		"README.md"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Rabbit-Company/Web-JS.git",
+		"directory": "packages/core"
+	},
+	"contributors": [
+		"Rabbit Company <info@rabbit-company.com> (https://github.com/Rabbit-Company)"
+	],
+	"bugs": {
+		"url": "https://github.com/Rabbit-Company/Web-JS/issues",
+		"email": "info@rabbit-company.com"
+	},
+	"keywords": [
+		"api",
+		"web",
+		"framework",
+		"security",
+		"http",
+		"server",
+		"routing",
+		"middleware"
+	],
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
+}
