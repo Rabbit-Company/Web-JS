@@ -89,8 +89,13 @@ class Web {
     node.routeId = routeId;
   }
   errorHandler;
+  notFoundHandler;
   onError(handler) {
     this.errorHandler = handler;
+    return this;
+  }
+  onNotFound(handler) {
+    this.notFoundHandler = handler;
     return this;
   }
   getPathSegments(path) {
@@ -232,6 +237,16 @@ class Web {
     this.clearCaches();
     const id = this.generateId();
     this.addRouteToTrie(method, path, handlers, id);
+    const hasOptionsRoute = this.routes.some((route) => route.method === "OPTIONS" && route.path === path);
+    if (method !== "OPTIONS" && !hasOptionsRoute) {
+      const optionsId = this.generateId();
+      this.addRouteToTrie("OPTIONS", path, [
+        async (ctx) => {
+          const response = new Response(null, { status: 204 });
+          return response;
+        }
+      ], optionsId);
+    }
     const matcher = this.getCachedMatcher(path, this.getPathSegments(path));
     this.routes.push({
       id,
@@ -357,8 +372,12 @@ class Web {
   scope(path, callback) {
     const scopedApp = new this.constructor;
     callback(scopedApp);
-    const baseSegments = this.getPathSegments(path);
-    for (const mw of scopedApp.middlewares) {
+    this.route(path, scopedApp);
+    return this;
+  }
+  route(prefix, subApp) {
+    const baseSegments = this.getPathSegments(prefix);
+    for (const mw of subApp.middlewares) {
       const originalMatch = mw.match;
       const prefixedMatch = (url) => {
         const urlSegments = this.getPathSegments(url);
@@ -378,14 +397,10 @@ class Web {
         ...mw,
         id: this.generateId(),
         match: prefixedMatch,
-        path: path + (mw.path ?? ""),
-        pathPrefix: getStaticPrefix(path + (mw.path ?? ""))
+        path: prefix + (mw.path ?? ""),
+        pathPrefix: getStaticPrefix(prefix + (mw.path ?? ""))
       });
     }
-    this.route(path, scopedApp);
-    return this;
-  }
-  route(prefix, subApp) {
     for (const route of subApp.routes) {
       const newPath = joinPaths(prefix, route.path);
       this.addRoute(route.method, newPath, ...route.handlers);
@@ -503,6 +518,13 @@ class Web {
     };
     return ctx;
   }
+  async createNotFoundResponse(req, parsedUrl) {
+    if (this.notFoundHandler) {
+      const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl);
+      return this.notFoundHandler(ctx);
+    }
+    return new Response("Not Found", { status: 404 });
+  }
   async handle(req) {
     const method = req.method;
     const parsedUrl = this.parseUrl(req.url);
@@ -510,7 +532,7 @@ class Web {
     try {
       const matched = this.match(method, path);
       if (!matched) {
-        return new Response("Not Found", { status: 404 });
+        return this.createNotFoundResponse(req, parsedUrl);
       }
       if (this.middlewares.length === 0 && matched.params === EMPTY_PARAMS && matched.handlers?.length === 1) {
         const ctx2 = this.createContext(req, EMPTY_PARAMS, parsedUrl);
@@ -555,23 +577,35 @@ class Web {
       }
       const ctx = this.createContext(req, finalParams, parsedUrl);
       const handlers = matched.handlers;
-      const totalHandlers = middlewareCount + (handlers?.length || 0);
-      if (totalHandlers === 0) {
-        return new Response("No response returned by handler", { status: 500 });
-      }
+      const allMiddleware = [];
       for (let i = 0;i < middlewareCount; i++) {
-        const result = await middlewares[i](ctx, async () => {});
-        if (result instanceof Response) {
-          return result;
-        }
+        allMiddleware.push(middlewares[i]);
       }
       if (handlers) {
-        for (let i = 0;i < handlers.length; i++) {
-          const result = await handlers[i](ctx, async () => {});
-          if (result instanceof Response) {
-            return result;
-          }
+        allMiddleware.push(...handlers);
+      }
+      if (allMiddleware.length === 0) {
+        return this.createNotFoundResponse(req, parsedUrl);
+      }
+      let currentIndex = 0;
+      let response = undefined;
+      const dispatch = async () => {
+        if (currentIndex >= allMiddleware.length) {
+          return;
         }
+        const middleware = allMiddleware[currentIndex++];
+        const result = await middleware(ctx, dispatch);
+        if (result instanceof Response) {
+          response = result;
+        }
+        return result;
+      };
+      await dispatch();
+      if (response instanceof Response) {
+        return response;
+      }
+      if (!handlers || handlers.length === 0) {
+        return this.createNotFoundResponse(req, parsedUrl);
       }
       return new Response("No response returned by handler", { status: 500 });
     } catch (err) {

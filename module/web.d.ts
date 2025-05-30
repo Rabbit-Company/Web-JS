@@ -259,6 +259,7 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
  * - Support for all standard HTTP methods
  * - Parameter extraction and wildcard routes
  * - Dynamic route and middleware removal
+ * - Custom error and 404 handlers
  *
  * @template T - The type of the context state object that will be shared across middleware
  *
@@ -326,6 +327,8 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	private addRouteToTrie;
 	/** Error handler function for handling uncaught errors */
 	private errorHandler?;
+	/** 404 Not Found handler function */
+	private notFoundHandler?;
 	/**
 	 * Sets a global error handler for the application.
 	 * This handler will be called whenever an unhandled error occurs during request processing.
@@ -342,6 +345,52 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	 * ```
 	 */
 	onError(handler: (err: Error, ctx: Context<T>) => Response | Promise<Response>): this;
+	/**
+	 * Sets a custom 404 Not Found handler for the application.
+	 * This handler will be called whenever a request doesn't match any registered routes.
+	 *
+	 * @param handler - Function that takes a context and returns a Response
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * // Simple text response
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.text('Page not found', 404);
+	 * });
+	 *
+	 * // JSON response with request details
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.json({
+	 *     error: 'Not Found',
+	 *     path: ctx.req.url,
+	 *     method: ctx.req.method
+	 *   }, 404);
+	 * });
+	 *
+	 * // HTML response with custom 404 page
+	 * app.onNotFound((ctx) => {
+	 *   return ctx.html(`
+	 *     <!DOCTYPE html>
+	 *     <html>
+	 *       <head>
+	 *         <title>404 - Page Not Found</title>
+	 *         <style>
+	 *           body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+	 *           h1 { color: #ff6b6b; }
+	 *         </style>
+	 *       </head>
+	 *       <body>
+	 *         <h1>404 - Page Not Found</h1>
+	 *         <p>The page you're looking for doesn't exist.</p>
+	 *         <a href="/">Go back home</a>
+	 *       </body>
+	 *     </html>
+	 *   `, 404);
+	 * });
+	 * ```
+	 */
+	onNotFound(handler: (ctx: Context<T>) => Response | Promise<Response>): this;
 	/**
 	 * Splits a path into segments and caches the result for performance.
 	 *
@@ -824,6 +873,11 @@ export declare class Web<T extends Record<string, unknown> = Record<string, unkn
 	 * @private
 	 */
 	private createContext;
+	/**
+	 * Creates a 404 Not Found response using the custom handler if set.
+	 * @private
+	 */
+	private createNotFoundResponse;
 	/**
 	 * Main request handler that processes incoming requests through the middleware chain and route handlers.
 	 * This method implements several optimization paths for different scenarios:
