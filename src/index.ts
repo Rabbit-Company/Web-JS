@@ -837,9 +837,31 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		const scopedApp = new (this.constructor as any)() as this;
 		callback(scopedApp);
 
-		const baseSegments = this.getPathSegments(path);
+		this.route(path, scopedApp);
+		return this;
+	}
 
-		for (const mw of scopedApp.middlewares) {
+	/**
+	 * Mounts a sub-application at the specified path prefix.
+	 * All routes from the sub-application will be prefixed with the given path.
+	 *
+	 * @param prefix - Path prefix to mount the sub-application at
+	 * @param subApp - Web instance to mount
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * const adminApp = new Web();
+	 * adminApp.get('/dashboard', handler);
+	 *
+	 * app.route('/admin', adminApp);
+	 * // Dashboard will be available at /admin/dashboard
+	 * ```
+	 */
+	route(prefix: string, subApp: this): this {
+		const baseSegments = this.getPathSegments(prefix);
+
+		for (const mw of subApp.middlewares) {
 			const originalMatch = mw.match;
 			const prefixedMatch = (url: string): MatchResult => {
 				const urlSegments = this.getPathSegments(url);
@@ -864,33 +886,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				...mw,
 				id: this.generateId(), // Generate new ID for the parent app
 				match: prefixedMatch,
-				path: path + (mw.path ?? ""),
-				pathPrefix: getStaticPrefix(path + (mw.path ?? "")),
+				path: prefix + (mw.path ?? ""),
+				pathPrefix: getStaticPrefix(prefix + (mw.path ?? "")),
 			});
 		}
 
-		this.route(path, scopedApp);
-		return this;
-	}
-
-	/**
-	 * Mounts a sub-application at the specified path prefix.
-	 * All routes from the sub-application will be prefixed with the given path.
-	 *
-	 * @param prefix - Path prefix to mount the sub-application at
-	 * @param subApp - Web instance to mount
-	 * @returns The Web instance for method chaining
-	 *
-	 * @example
-	 * ```typescript
-	 * const adminApp = new Web();
-	 * adminApp.get('/dashboard', handler);
-	 *
-	 * app.route('/admin', adminApp);
-	 * // Dashboard will be available at /admin/dashboard
-	 * ```
-	 */
-	route(prefix: string, subApp: this): this {
 		for (const route of subApp.routes) {
 			const newPath = joinPaths(prefix, route.path);
 			this.addRoute(route.method, newPath, ...route.handlers);

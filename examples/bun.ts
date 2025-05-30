@@ -102,7 +102,6 @@ protectedApi.use(
 
 // Bearer token authentication middleware
 protectedApi.use(async (ctx, next) => {
-	console.log("protected");
 	const authHeader = ctx.req.headers.get("Authorization");
 
 	if (!authHeader || !authHeader.startsWith("Bearer ")) {

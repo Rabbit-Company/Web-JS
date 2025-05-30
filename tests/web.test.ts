@@ -176,6 +176,412 @@ describe("Web Framework", () => {
 		});
 	});
 
+	describe("Middleware Route Mounting", () => {
+		it("should copy middleware when mounting sub-applications with route()", async () => {
+			const app = new Web<{ role: string; authToken?: string }>();
+			const protectedApi = new Web<{ role: string; authToken?: string }>();
+
+			// Add authentication middleware to the sub-application
+			protectedApi.use(async (ctx, next) => {
+				const authHeader = ctx.req.headers.get("Authorization");
+
+				if (!authHeader || !authHeader.startsWith("Bearer ")) {
+					return ctx.json({ error: "Missing or invalid authorization" }, 401);
+				}
+
+				const token = authHeader.substring(7);
+
+				if (token === "valid-token") {
+					ctx.set("role", "authenticated");
+					ctx.set("authToken", token);
+				} else {
+					return ctx.json({ error: "Invalid token" }, 401);
+				}
+
+				await next();
+			});
+
+			// Add a protected route
+			protectedApi.get("/profile", (ctx) => {
+				return ctx.json({
+					role: ctx.get("role"),
+					token: ctx.get("authToken"),
+					message: "Protected data",
+				});
+			});
+
+			// Mount the protected API
+			app.route("/api/protected", protectedApi);
+
+			// Test without auth header - should be blocked by middleware
+			const unauthorizedRes = await app.handle(mockRequest("/api/protected/profile", "GET"));
+			expect(unauthorizedRes.status).toBe(401);
+			expect(await unauthorizedRes.json()).toEqual({
+				error: "Missing or invalid authorization",
+			});
+
+			// Test with invalid token - should be blocked by middleware
+			const invalidTokenRes = await app.handle(
+				mockRequest("/api/protected/profile", "GET", {
+					Authorization: "Bearer invalid-token",
+				})
+			);
+			expect(invalidTokenRes.status).toBe(401);
+			expect(await invalidTokenRes.json()).toEqual({
+				error: "Invalid token",
+			});
+
+			// Test with valid token - should pass through middleware and reach handler
+			const validRes = await app.handle(
+				mockRequest("/api/protected/profile", "GET", {
+					Authorization: "Bearer valid-token",
+				})
+			);
+			expect(validRes.status).toBe(200);
+			expect(await validRes.json()).toEqual({
+				role: "authenticated",
+				token: "valid-token",
+				message: "Protected data",
+			});
+		});
+
+		it("should copy method-specific middleware when mounting sub-applications", async () => {
+			const app = new Web<{ method: string }>();
+			const api = new Web<{ method: string }>();
+
+			// Add method-specific middleware to the sub-application
+			api.use("POST", "/users", async (ctx, next) => {
+				ctx.set("method", "POST middleware executed");
+				await next();
+			});
+
+			api.use("GET", "/users", async (ctx, next) => {
+				ctx.set("method", "GET middleware executed");
+				await next();
+			});
+
+			// Add routes
+			api.get("/users", (ctx) => {
+				return ctx.text(ctx.get("method") || "no middleware");
+			});
+
+			api.post("/users", (ctx) => {
+				return ctx.text(ctx.get("method") || "no middleware");
+			});
+
+			// Mount the API
+			app.route("/api", api);
+
+			// Test GET request - should execute GET middleware
+			const getRes = await app.handle(mockRequest("/api/users", "GET"));
+			expect(await getRes.text()).toBe("GET middleware executed");
+
+			// Test POST request - should execute POST middleware
+			const postRes = await app.handle(mockRequest("/api/users", "POST"));
+			expect(await postRes.text()).toBe("POST middleware executed");
+		});
+
+		it("should copy path-specific middleware when mounting sub-applications", async () => {
+			const app = new Web<{ pathMiddleware: string }>();
+			const admin = new Web<{ pathMiddleware: string }>();
+
+			// Add path-specific middleware to the sub-application
+			admin.use("/dashboard/*", async (ctx, next) => {
+				ctx.set("pathMiddleware", "dashboard middleware");
+				await next();
+			});
+
+			admin.use("/settings", async (ctx, next) => {
+				ctx.set("pathMiddleware", "settings middleware");
+				await next();
+			});
+
+			// Add routes
+			admin.get("/dashboard/overview", (ctx) => {
+				return ctx.text(ctx.get("pathMiddleware") || "no middleware");
+			});
+
+			admin.get("/dashboard/stats", (ctx) => {
+				return ctx.text(ctx.get("pathMiddleware") || "no middleware");
+			});
+
+			admin.get("/settings", (ctx) => {
+				return ctx.text(ctx.get("pathMiddleware") || "no middleware");
+			});
+
+			admin.get("/other", (ctx) => {
+				return ctx.text(ctx.get("pathMiddleware") || "no middleware");
+			});
+
+			// Mount the admin panel
+			app.route("/admin", admin);
+
+			// Test dashboard routes - should execute dashboard middleware
+			const dashboardOverviewRes = await app.handle(mockRequest("/admin/dashboard/overview"));
+			expect(await dashboardOverviewRes.text()).toBe("dashboard middleware");
+
+			const dashboardStatsRes = await app.handle(mockRequest("/admin/dashboard/stats"));
+			expect(await dashboardStatsRes.text()).toBe("dashboard middleware");
+
+			// Test settings route - should execute settings middleware
+			const settingsRes = await app.handle(mockRequest("/admin/settings"));
+			expect(await settingsRes.text()).toBe("settings middleware");
+
+			// Test other route - should not execute any path-specific middleware
+			const otherRes = await app.handle(mockRequest("/admin/other"));
+			expect(await otherRes.text()).toBe("no middleware");
+		});
+
+		it("should copy global middleware when mounting sub-applications", async () => {
+			const app = new Web<{ global: string; subGlobal: string }>();
+			const api = new Web<{ global: string; subGlobal: string }>();
+
+			// Add global middleware to main app
+			app.use(async (ctx, next) => {
+				ctx.set("global", "main app global");
+				await next();
+			});
+
+			// Add global middleware to sub-application
+			api.use(async (ctx, next) => {
+				ctx.set("subGlobal", "sub app global");
+				await next();
+			});
+
+			// Add route to sub-application
+			api.get("/test", (ctx) => {
+				return ctx.json({
+					global: ctx.get("global"),
+					subGlobal: ctx.get("subGlobal"),
+				});
+			});
+
+			// Mount the API
+			app.route("/api", api);
+
+			const res = await app.handle(mockRequest("/api/test"));
+			expect(await res.json()).toEqual({
+				global: "main app global",
+				subGlobal: "sub app global",
+			});
+		});
+
+		it("should handle nested route mounting with middleware", async () => {
+			const app = new Web<{ level: string }>();
+			const api = new Web<{ level: string }>();
+			const v1 = new Web<{ level: string }>();
+
+			// Add middleware at each level
+			app.use(async (ctx, next) => {
+				ctx.set("level", "app");
+				await next();
+			});
+
+			api.use(async (ctx, next) => {
+				const current = ctx.get("level");
+				ctx.set("level", `${current} -> api`);
+				await next();
+			});
+
+			v1.use(async (ctx, next) => {
+				const current = ctx.get("level");
+				ctx.set("level", `${current} -> v1`);
+				await next();
+			});
+
+			// Add route to deepest level
+			v1.get("/users", (ctx) => {
+				const level = ctx.get("level");
+				return ctx.text(`${level} -> handler`);
+			});
+
+			// Mount nested applications
+			api.route("/v1", v1);
+			app.route("/api", api);
+
+			const res = await app.handle(mockRequest("/api/v1/users"));
+			expect(await res.text()).toBe("app -> api -> v1 -> handler");
+		});
+
+		it("should maintain middleware execution order after mounting", async () => {
+			const app = new Web<{ calls: string[] }>();
+			const subApp = new Web<{ calls: string[] }>();
+
+			// Add middleware to main app
+			app.use(async (ctx, next) => {
+				const calls = ctx.get("calls") || [];
+				calls.push("main-1");
+				ctx.set("calls", calls);
+				await next();
+			});
+
+			app.use("/mounted/*", async (ctx, next) => {
+				const calls = ctx.get("calls") || [];
+				calls.push("main-scoped");
+				ctx.set("calls", calls);
+				await next();
+			});
+
+			// Add middleware to sub-app
+			subApp.use(async (ctx, next) => {
+				const calls = ctx.get("calls") || [];
+				calls.push("sub-global");
+				ctx.set("calls", calls);
+				await next();
+			});
+
+			subApp.use("/test", async (ctx, next) => {
+				const calls = ctx.get("calls") || [];
+				calls.push("sub-scoped");
+				ctx.set("calls", calls);
+				await next();
+			});
+
+			// Add route to sub-app
+			subApp.get("/test", (ctx) => {
+				const calls = ctx.get("calls") || [];
+				calls.push("handler");
+				return ctx.json(calls);
+			});
+
+			// Mount the sub-app
+			app.route("/mounted", subApp);
+
+			const res = await app.handle(mockRequest("/mounted/test"));
+			const executionOrder = await res.json();
+
+			// Verify middleware execution order:
+			// 1. Main app middleware (global)
+			// 2. Main app middleware (scoped to /mounted/*)
+			// 3. Sub app middleware (global, now scoped to /mounted/*)
+			// 4. Sub app middleware (scoped to /test, now scoped to /mounted/test)
+			// 5. Route handler
+			expect(executionOrder).toEqual(["main-1", "main-scoped", "sub-global", "sub-scoped", "handler"]);
+		});
+
+		it("should handle scope() with middleware correctly", async () => {
+			const app = new Web<{ scopeAuth: boolean; userId?: string }>();
+
+			// Create a scoped application with middleware
+			app.scope("/users", (userApp) => {
+				// Add authentication middleware to the scope
+				userApp.use(async (ctx, next) => {
+					const authHeader = ctx.req.headers.get("Authorization");
+					if (!authHeader) {
+						return ctx.json({ error: "Authentication required" }, 401);
+					}
+					ctx.set("scopeAuth", true);
+					await next();
+				});
+
+				// Add parameter-specific middleware
+				userApp.use("/:id", async (ctx, next) => {
+					ctx.set("userId", ctx.params.id);
+					await next();
+				});
+
+				// Add routes
+				userApp.get("/", (ctx) => {
+					return ctx.json({
+						authenticated: ctx.get("scopeAuth"),
+						route: "user list",
+					});
+				});
+
+				userApp.get("/:id", (ctx) => {
+					return ctx.json({
+						authenticated: ctx.get("scopeAuth"),
+						userId: ctx.get("userId"),
+						route: "user detail",
+					});
+				});
+			});
+
+			// Test without authentication - should be blocked
+			const unauthorizedRes = await app.handle(mockRequest("/users"));
+			expect(unauthorizedRes.status).toBe(401);
+			expect(await unauthorizedRes.json()).toEqual({
+				error: "Authentication required",
+			});
+
+			// Test with authentication - user list
+			const userListRes = await app.handle(mockRequest("/users", "GET", { Authorization: "Bearer token" }));
+			expect(await userListRes.json()).toEqual({
+				authenticated: true,
+				route: "user list",
+			});
+
+			// Test with authentication - user detail (should also execute parameter middleware)
+			const userDetailRes = await app.handle(mockRequest("/users/123", "GET", { Authorization: "Bearer token" }));
+			expect(await userDetailRes.json()).toEqual({
+				authenticated: true,
+				userId: "123",
+				route: "user detail",
+			});
+		});
+
+		it("should not duplicate middleware when using scope() followed by route()", async () => {
+			const app = new Web<{ count: number }>();
+
+			// Create a sub-app with middleware
+			const subApp = new Web<{ count: number }>();
+			subApp.use(async (ctx, next) => {
+				const count = ctx.get("count") || 0;
+				ctx.set("count", count + 1);
+				await next();
+			});
+
+			subApp.get("/test", (ctx) => {
+				return ctx.text(ctx.get("count").toString());
+			});
+
+			// First mount using scope() - this should copy middleware
+			app.scope("/scoped", (scopedApp) => {
+				scopedApp.route("/sub", subApp);
+			});
+
+			// Test that middleware executes only once
+			const res = await app.handle(mockRequest("/scoped/sub/test"));
+			expect(await res.text()).toBe("1"); // Should be 1, not 2 (which would indicate duplication)
+		});
+
+		it("should handle middleware removal after route mounting", async () => {
+			const app = new Web<{ protected: boolean }>();
+			const api = new Web<{ protected: boolean }>();
+
+			// Add middleware to sub-app
+			api.use(async (ctx, next) => {
+				ctx.set("protected", true);
+				await next();
+			});
+
+			api.get("/data", (ctx) => {
+				return ctx.json({ protected: ctx.get("protected") || false });
+			});
+
+			// Mount the API
+			app.route("/api", api);
+
+			// Should work with middleware initially
+			let res = await app.handle(mockRequest("/api/data"));
+			expect(await res.json()).toEqual({ protected: true });
+
+			// Find and remove the copied middleware
+			const middlewares = app.getMiddlewares();
+			const copiedMiddleware = middlewares.find((mw) => mw.path === "/api");
+			expect(copiedMiddleware).toBeDefined();
+
+			if (copiedMiddleware) {
+				const removed = app.removeMiddleware(copiedMiddleware.id);
+				expect(removed).toBe(true);
+			}
+
+			// Should work without middleware after removal
+			res = await app.handle(mockRequest("/api/data"));
+			expect(await res.json()).toEqual({ protected: false });
+		});
+	});
+
 	describe("Route Removal", () => {
 		it("should remove routes by ID", async () => {
 			const app = new Web();
