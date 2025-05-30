@@ -1,5 +1,5 @@
 import { Web } from "../src";
-import { basicAuth, cors, rateLimit } from "../src/middleware";
+import { basicAuth, bearerAuth, cors, rateLimit } from "../src/middleware";
 
 /**
  * Web Framework Usage Examples
@@ -101,34 +101,29 @@ protectedApi.use(
 );
 
 // Bearer token authentication middleware
-protectedApi.use(async (ctx, next) => {
-	const authHeader = ctx.req.headers.get("Authorization");
+protectedApi.use(
+	bearerAuth({
+		validate(token, ctx) {
+			if (token === "demo-token-admin") {
+				ctx.state.user = {
+					id: "user-123",
+					name: "API Admin User",
+					role: "admin",
+				};
+				return true;
+			} else if (token === "demo-token-user") {
+				ctx.state.user = {
+					id: "user-456",
+					name: "API User",
+					role: "user",
+				};
+				return true;
+			}
 
-	if (!authHeader || !authHeader.startsWith("Bearer ")) {
-		return ctx.json({ error: "Missing or invalid authorization" }, 401);
-	}
-
-	const token = authHeader.substring(7);
-
-	// In production, verify JWT token here
-	if (token === "demo-token-admin") {
-		ctx.state.user = {
-			id: "user-123",
-			name: "API Admin User",
-			role: "admin",
-		};
-	} else if (token === "demo-token-user") {
-		ctx.state.user = {
-			id: "user-456",
-			name: "API User",
-			role: "user",
-		};
-	} else {
-		return ctx.json({ error: "Invalid token" }, 401);
-	}
-
-	await next();
-});
+			return false;
+		},
+	})
+);
 
 // Protected endpoints
 protectedApi.get("/profile", (ctx) => {
