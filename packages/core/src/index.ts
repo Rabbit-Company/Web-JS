@@ -101,6 +101,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 */
 	constructor() {
 		this.handle = this.handle.bind(this);
+		this.handleBun = this.handleBun.bind(this);
 	}
 
 	/**
@@ -1110,7 +1111,12 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @returns Context object with request data and helper methods
 	 * @private
 	 */
-	private createContext(req: Request, params: Record<string, string>, parsedUrl: { pathname: string; searchParams?: URLSearchParams }): Context<T> {
+	private createContext(
+		req: Request,
+		params: Record<string, string>,
+		parsedUrl: { pathname: string; searchParams?: URLSearchParams },
+		clientIp?: string
+	): Context<T> {
 		// Initialize response headers storage
 		const responseHeaders = new Headers();
 
@@ -1121,6 +1127,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			req,
 			params,
 			state,
+			clientIp,
 			header: (name: string, value: string) => {
 				responseHeaders.set(name, value);
 			},
@@ -1193,10 +1200,10 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * Creates a 404 Not Found response using the custom handler if set.
 	 * @private
 	 */
-	private async createNotFoundResponse(req: Request, parsedUrl: { pathname: string; searchParams?: URLSearchParams }): Promise<Response> {
+	private async createNotFoundResponse(req: Request, parsedUrl: { pathname: string; searchParams?: URLSearchParams }, clientIp?: string): Promise<Response> {
 		if (this.notFoundHandler) {
 			// Create a minimal context for the 404 handler
-			const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl);
+			const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl, clientIp);
 			return this.notFoundHandler(ctx);
 		}
 		return new Response("Not Found", { status: 404 });
@@ -1352,6 +1359,193 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			// If we only had middleware (no route handlers), this is a 404
 			if (!handlers || handlers.length === 0) {
 				return this.createNotFoundResponse(req, parsedUrl);
+			}
+
+			// If we had route handlers but they didn't return a response, that's a 500
+			return new Response("No response returned by handler", { status: 500 });
+		} catch (err) {
+			if (this.errorHandler) {
+				// We need to create a minimal context for error handling
+				const errorCtx: Context<T> = {
+					req,
+					params: EMPTY_PARAMS,
+					state: {} as T,
+					// Minimal implementations for error handling
+					text: (data, status = 500) => new Response(data, { status }),
+					json: (data, status = 500) =>
+						new Response(JSON.stringify(data), {
+							status,
+							headers: new Headers({ "Content-Type": "application/json" }),
+						}),
+					html: (html, status = 500) =>
+						new Response(html, {
+							status,
+							headers: new Headers({ "Content-Type": "text/html; charset=utf-8" }),
+						}),
+					query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
+					body: async () => ({} as any),
+					header: () => {},
+					set: () => {},
+					get: () => undefined as any,
+					redirect: () => new Response(null, { status: 302 }),
+				};
+				return this.errorHandler(err as Error, errorCtx);
+			}
+			return new Response("Internal Server Error", { status: 500 });
+		}
+	}
+
+	/**
+	 * Request handler optimized for Bun runtime with automatic IP extraction.
+	 * Uses Bun's server.requestIP() for reliable client IP detection.
+	 *
+	 * @param req - The incoming Request object
+	 * @param server - Bun.Server instance for accessing runtime-specific features
+	 * @returns Promise that resolves to a Response object
+	 *
+	 * @example
+	 * ```typescript
+	 * const server = Bun.serve({
+	 *   port: 3000,
+	 *   hostname: 'localhost',
+	 *   fetch: (req, server) => app.handleBun(req, server)
+	 * });
+	 *
+	 * // Or using shorthand
+	 * const server = Bun.serve({
+	 *   port: 3000,
+	 *   fetch: app.handleBun
+	 * });
+	 * ```
+	 */
+	async handleBun(req: Request, server: Bun.Server): Promise<Response> {
+		const method = req.method as Method;
+		const parsedUrl = this.parseUrl(req.url);
+		const path = parsedUrl.pathname;
+
+		try {
+			const clientIp = server.requestIP(req)?.address;
+
+			// Match route first
+			const matched = this.match(method, path);
+			if (!matched) {
+				return this.createNotFoundResponse(req, parsedUrl, clientIp);
+			}
+
+			// Ultra-fast path: no middlewares, no parameters, single handler
+			if (this.middlewares.length === 0 && matched.params === EMPTY_PARAMS && matched.handlers?.length === 1) {
+				const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl, clientIp);
+				const result = await matched.handlers[0](ctx, async () => {});
+				return result instanceof Response ? result : new Response("No response returned by handler", { status: 500 });
+			}
+
+			// Fast path: no middlewares, might have parameters
+			if (this.middlewares.length === 0) {
+				const ctx = this.createContext(req, matched.params, parsedUrl, clientIp);
+
+				// Optimized handler execution without allocation
+				const handlers = matched.handlers;
+				if (handlers) {
+					for (let i = 0; i < handlers.length; i++) {
+						const result = await handlers[i](ctx, async () => {});
+						if (result instanceof Response) {
+							return result;
+						}
+					}
+				}
+
+				return new Response("No response returned by handler", { status: 500 });
+			}
+
+			// Full path with middleware processing
+			const methodMiddlewares = this.getMethodMiddlewares(method);
+			let finalParams = matched.params;
+
+			// Pre-allocate middleware array with estimated size
+			const middlewares: Middleware<T>[] = new Array(methodMiddlewares.length);
+			let middlewareCount = 0;
+
+			// Only process middlewares if there are any
+			if (methodMiddlewares.length > 0) {
+				// Pre-filter middlewares by path prefix before expensive matching
+				for (let i = 0; i < methodMiddlewares.length; i++) {
+					const mw = methodMiddlewares[i];
+
+					// Skip expensive match() call if path doesn't start with middleware's static prefix
+					if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+						continue;
+					}
+
+					const matchResult = mw.match(path);
+					if (matchResult.matched) {
+						// Only create new params object if we have parameters to merge
+						if (Object.keys(matchResult.params).length > 0) {
+							if (finalParams === EMPTY_PARAMS) {
+								finalParams = { ...matchResult.params };
+							} else {
+								finalParams = { ...finalParams, ...matchResult.params };
+							}
+						}
+						middlewares[middlewareCount++] = mw.handler;
+					}
+				}
+			}
+
+			// Create context once
+			const ctx = this.createContext(req, finalParams, parsedUrl, clientIp);
+
+			// Execute middleware and handlers
+			const handlers = matched.handlers;
+
+			// Build the complete middleware chain
+			const allMiddleware: Middleware<T>[] = [];
+
+			// Add middlewares first
+			for (let i = 0; i < middlewareCount; i++) {
+				allMiddleware.push(middlewares[i]);
+			}
+
+			// Add route handlers
+			if (handlers) {
+				allMiddleware.push(...handlers);
+			}
+
+			// If there are no handlers at all (neither middleware nor route handlers)
+			if (allMiddleware.length === 0) {
+				return this.createNotFoundResponse(req, parsedUrl, clientIp);
+			}
+
+			// Create the composed middleware chain
+			let currentIndex = 0;
+			let response: any = undefined;
+
+			const dispatch = async (): Promise<Response | void> => {
+				if (currentIndex >= allMiddleware.length) {
+					return;
+				}
+
+				const middleware = allMiddleware[currentIndex++];
+				const result = await middleware(ctx, dispatch);
+
+				// Store the response if one was returned
+				if (result instanceof Response) {
+					response = result;
+				}
+
+				return result;
+			};
+
+			// Start the middleware chain
+			await dispatch();
+
+			if (response instanceof Response) {
+				return response;
+			}
+
+			// If no response was returned, check if we had actual route handlers
+			// If we only had middleware (no route handlers), this is a 404
+			if (!handlers || handlers.length === 0) {
+				return this.createNotFoundResponse(req, parsedUrl, clientIp);
 			}
 
 			// If we had route handlers but they didn't return a response, that's a 500

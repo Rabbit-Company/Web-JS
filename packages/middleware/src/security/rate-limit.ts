@@ -344,5 +344,5 @@ export function createKeyGenerator<T extends Record<string, unknown>>(options: {
 	};
 }
 
-export { Algorithm } from "@rabbit-company/rate-limiter";
-export type { RateLimiter, RateLimitResult } from "@rabbit-company/rate-limiter";
+export * from "@rabbit-company/rate-limiter";
+export type * from "@rabbit-company/rate-limiter";

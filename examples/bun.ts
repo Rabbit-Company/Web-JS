@@ -1,5 +1,5 @@
 import { Web } from "../packages/core/src";
-import { basicAuth, bearerAuth, cors, rateLimit } from "../packages/middleware/src";
+import { basicAuth, bearerAuth, cors, logger, rateLimit } from "../packages/middleware/src";
 
 /**
  * Web Framework Usage Examples
@@ -42,8 +42,17 @@ app.use(
 	})
 );
 
+// Configure logger
+app.use(
+	logger({
+		preset: "standard",
+		logResponses: false,
+	})
+);
+
 // Global request tracking middleware
 app.use(async (ctx, next) => {
+	console.log("IP", ctx.clientIp);
 	// Generate unique request ID
 	ctx.state.reqUUID = crypto.randomUUID();
 	ctx.state.startTime = performance.now();
@@ -52,10 +61,6 @@ app.use(async (ctx, next) => {
 	ctx.header("X-Request-ID", ctx.state.reqUUID);
 	ctx.header("X-Powered-By", "Web Framework by Rabbit Company");
 
-	// Log incoming request
-	const url = new URL(ctx.req.url);
-	console.log(`→ [${ctx.state.reqUUID}] ${ctx.req.method} ${url.pathname}`);
-
 	try {
 		await next();
 	} catch (error) {
@@ -63,10 +68,6 @@ app.use(async (ctx, next) => {
 		console.error(`✗ [${ctx.state.reqUUID}] Error:`, error);
 		throw error;
 	}
-
-	// Log response details
-	const duration = performance.now() - ctx.state.startTime;
-	console.log(`← [${ctx.state.reqUUID}] ${ctx.res?.status || 200} - ${duration.toFixed(2)}ms`);
 });
 
 // Rate limiting middleware - protect against abuse
@@ -546,8 +547,7 @@ const server = Bun.serve({
 	port: PORT,
 	hostname: HOSTNAME,
 
-	// Handle HTTP requests
-	fetch: app.handle,
+	fetch: app.handleBun,
 
 	// WebSocket configuration
 	websocket: {

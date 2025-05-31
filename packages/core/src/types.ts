@@ -154,6 +154,8 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	params: Record<string, string>;
 	/** Application state object for sharing data between middleware */
 	state: T;
+	/** Client IP address, populated by web server or `ip-extract` middleware */
+	clientIp?: string;
 	/**
 	 * Returns a plain text response.
 	 *

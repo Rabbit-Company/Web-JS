@@ -127,8 +127,28 @@ async function buildAllMiddleware() {
 			logger.warn("Security middleware directory not found, skipping...");
 		}
 
+		// Build utils middleware individually
+		const utilsPath = `${middlewarePath}/utils`;
+		try {
+			const utilFiles = await fs.readdir(utilsPath);
+			for (const file of utilFiles) {
+				if (file.endsWith(".ts") && file !== "index.ts") {
+					const name = file.replace(".ts", "");
+					await Bun.build({
+						entrypoints: [`${utilsPath}/${file}`],
+						outdir: `${distPath}/utils`,
+						target: "node",
+						format: "esm",
+						plugins: [dts({ output: { noBanner: true } })],
+					});
+				}
+			}
+		} catch (error) {
+			logger.warn("Utils middleware directory not found, skipping...");
+		}
+
 		// Build category index files
-		const categories = ["auth", "security"];
+		const categories = ["auth", "security", "utils"];
 		for (const category of categories) {
 			try {
 				await fs.access(`${middlewarePath}/${category}/index.ts`);

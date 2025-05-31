@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -39,6 +39,18 @@
 		"./security/rate-limit": {
 			"types": "./dist/security/rate-limit.d.ts",
 			"import": "./dist/security/rate-limit.js"
+		},
+		"./utils": {
+			"types": "./dist/utils/index.d.ts",
+			"import": "./dist/utils/index.js"
+		},
+		"./utils/logger": {
+			"types": "./dist/utils/logger.d.ts",
+			"import": "./dist/utils/logger.js"
+		},
+		"./utils/ip-extract": {
+			"types": "./dist/utils/ip-extract.d.ts",
+			"import": "./dist/utils/ip-extract.js"
 		}
 	},
 	"scripts": {
@@ -69,15 +81,17 @@
 		"security",
 		"cors",
 		"rate-limit",
+		"logging",
 		"web-framework",
 		"rabbit-company"
 	],
 	"peerDependencies": {
-		"@rabbit-company/web": "^0.2.0",
+		"@rabbit-company/web": "^0.4.0",
 		"typescript": "^5"
 	},
 	"dependencies": {
-		"@rabbit-company/rate-limiter": "^3.0.0"
+		"@rabbit-company/rate-limiter": "^3.0.0",
+		"@rabbit-company/logger": "^5.5.0"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"
