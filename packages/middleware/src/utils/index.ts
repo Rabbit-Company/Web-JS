@@ -3,3 +3,6 @@ export type { LoggerOptions } from "./logger";
 
 export * from "./ip-extract";
 export type * from "./ip-extract";
+
+export * from "./cache";
+export type * from "./cache";
