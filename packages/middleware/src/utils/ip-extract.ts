@@ -2,6 +2,8 @@ import type { Context, Middleware } from "../../../core/src";
 
 /**
  * Secure IP extraction configuration
+ *
+ * @interface IpExtractionConfig
  */
 export interface IpExtractionConfig {
 	/**
@@ -48,9 +50,16 @@ export interface IpExtractionConfig {
 }
 
 /**
- * Default secure configurations for common cloud providers
+ * Cloud provider configuration type
+ * @internal
  */
-const CLOUD_CONFIGS: Record<string, Partial<IpExtractionConfig>> = {
+type CloudProviderConfig = Partial<IpExtractionConfig>;
+
+/**
+ * Default secure configurations for common cloud providers
+ * @internal
+ */
+const CLOUD_CONFIGS: Record<string, CloudProviderConfig> = {
 	aws: {
 		trustProxy: true,
 		trustedHeaders: ["x-forwarded-for"],
@@ -109,22 +118,38 @@ const CLOUD_CONFIGS: Record<string, Partial<IpExtractionConfig>> = {
 };
 
 /**
- * IP extraction middleware that populates ctx.clientIp
+ * IP extraction middleware factory
+ *
+ * Creates middleware that securely extracts the client IP address from requests,
+ * handling various proxy configurations and preventing IP spoofing attacks.
+ *
+ * @template T - Context type parameter
+ * @param {IpExtractionConfig | IpExtractionPreset} [config="direct"] - Configuration object or preset name
+ * @returns {Middleware<T>} IP extraction middleware
  *
  * @example
  * ```typescript
- * // Using presets
+ * // Direct connection (no proxy)
+ * app.use(ipExtract("direct"));
+ *
+ * // Behind Cloudflare
  * app.use(ipExtract("cloudflare"));
  *
- * // Using configuration
+ * // Custom configuration
  * app.use(ipExtract({
  *   trustProxy: true,
  *   trustedProxies: ["10.0.0.0/8"],
- *   trustedHeaders: ["x-real-ip"]
+ *   trustedHeaders: ["x-real-ip"],
+ *   logWarnings: true
  * }));
  *
- * // Direct connection
- * app.use(ipExtract("direct"));
+ * // Access extracted IP
+ * app.get("/api/info", (ctx) => {
+ *   const clientIp = ctx.clientIp;
+ *   // or
+ *   const ip = getClientIp(ctx);
+ *   return ctx.json({ ip });
+ * });
  * ```
  */
 export function ipExtract<T extends Record<string, unknown> = Record<string, unknown>>(
@@ -168,8 +193,25 @@ export function ipExtract<T extends Record<string, unknown> = Record<string, unk
 }
 
 /**
- * Helper to get client IP from context (for use in other middlewares)
- * This provides backward compatibility and type safety
+ * Helper function to get client IP from context
+ *
+ * Provides a type-safe way to access the client IP that was
+ * extracted by the ipExtract middleware.
+ *
+ * @template T - Context type parameter
+ * @param {Context<T>} ctx - Request context
+ * @returns {string | undefined} The client IP address or undefined
+ *
+ * @example
+ * ```typescript
+ * app.use(ipExtract("cloudflare"));
+ *
+ * app.get("/api/log", (ctx) => {
+ *   const ip = getClientIp(ctx);
+ *   console.log(`Request from: ${ip}`);
+ *   return ctx.text("OK");
+ * });
+ * ```
  */
 export function getClientIp<T extends Record<string, unknown>>(ctx: Context<T>): string | undefined {
 	return ctx.clientIp;
@@ -177,6 +219,12 @@ export function getClientIp<T extends Record<string, unknown>>(ctx: Context<T>):
 
 /**
  * Securely extract client IP based on configuration
+ *
+ * @internal
+ * @template T - Context type parameter
+ * @param {Context<T>} ctx - Request context
+ * @param {Required<IpExtractionConfig>} config - Resolved configuration
+ * @returns {string | undefined} Extracted IP address
  */
 function secureExtractClientIp<T extends Record<string, unknown>>(ctx: Context<T>, config: Required<IpExtractionConfig>): string | undefined {
 	// 1. If not trusting proxies, only use direct connection IP
@@ -219,6 +267,15 @@ function secureExtractClientIp<T extends Record<string, unknown>>(ctx: Context<T
 
 /**
  * Parse X-Forwarded-For header securely
+ *
+ * Extracts the client IP from an X-Forwarded-For header chain,
+ * with protection against overly long chains.
+ *
+ * @internal
+ * @param {string} value - X-Forwarded-For header value
+ * @param {number} maxChain - Maximum chain length to accept
+ * @param {boolean} logWarnings - Whether to log warnings
+ * @returns {string | undefined} Extracted IP or undefined
  */
 function parseXForwardedFor(value: string, maxChain: number, logWarnings: boolean): string | undefined {
 	const ips = value
@@ -252,6 +309,11 @@ function parseXForwardedFor(value: string, maxChain: number, logWarnings: boolea
 
 /**
  * Check if IP is in trusted list (supports CIDR notation)
+ *
+ * @internal
+ * @param {string} ip - IP address to check
+ * @param {string[]} trustedList - List of trusted IPs/CIDRs
+ * @returns {boolean} True if IP is trusted
  */
 function isIpTrusted(ip: string, trustedList: string[]): boolean {
 	const normalizedIp = normalizeIp(ip);
@@ -272,6 +334,11 @@ function isIpTrusted(ip: string, trustedList: string[]): boolean {
 
 /**
  * Check if IP is within CIDR range
+ *
+ * @internal
+ * @param {string} ip - IP address to check
+ * @param {string} cidr - CIDR range (e.g., "10.0.0.0/8")
+ * @returns {boolean} True if IP is within range
  */
 function isIpInCidr(ip: string, cidr: string): boolean {
 	const [range, prefixLength] = cidr.split("/");
@@ -295,7 +362,11 @@ function isIpInCidr(ip: string, cidr: string): boolean {
 }
 
 /**
- * Convert IPv4 to number for CIDR calculation
+ * Convert IPv4 address to number for CIDR calculation
+ *
+ * @internal
+ * @param {string} ip - IPv4 address
+ * @returns {number} Numeric representation
  */
 function ipv4ToNumber(ip: string): number {
 	const parts = ip.split(".").map((p) => parseInt(p, 10));
@@ -303,7 +374,13 @@ function ipv4ToNumber(ip: string): number {
 }
 
 /**
- * Check if IPv6 is in CIDR range (simplified)
+ * Check if IPv6 is in CIDR range (simplified implementation)
+ *
+ * @internal
+ * @param {string} ip - IPv6 address
+ * @param {string} range - IPv6 CIDR range
+ * @param {number} prefix - Prefix length
+ * @returns {boolean} True if IP is within range
  */
 function isIpv6InCidr(ip: string, range: string, prefix: number): boolean {
 	// This is a simplified check - for production use, consider a library
@@ -319,7 +396,11 @@ function isIpv6InCidr(ip: string, range: string, prefix: number): boolean {
 }
 
 /**
- * Basic IPv6 normalization (expand :: notation)
+ * Basic IPv6 normalization
+ *
+ * @internal
+ * @param {string} ip - IPv6 address
+ * @returns {string} Normalized IPv6 address
  */
 function normalizeIpv6(ip: string): string {
 	// Remove any zone index
@@ -331,7 +412,11 @@ function normalizeIpv6(ip: string): string {
 }
 
 /**
- * Check if string is IPv4
+ * Check if string is a valid IPv4 address
+ *
+ * @internal
+ * @param {string} ip - String to check
+ * @returns {boolean} True if valid IPv4
  */
 function isIpv4(ip: string): boolean {
 	const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -345,7 +430,11 @@ function isIpv4(ip: string): boolean {
 }
 
 /**
- * Check if string is IPv6
+ * Check if string is a valid IPv6 address
+ *
+ * @internal
+ * @param {string} ip - String to check
+ * @returns {boolean} True if valid IPv6
  */
 function isIpv6(ip: string): boolean {
 	// Basic IPv6 validation
@@ -356,13 +445,23 @@ function isIpv6(ip: string): boolean {
 
 /**
  * Validate IP address format (IPv4 and IPv6)
+ *
+ * @internal
+ * @param {string} ip - String to validate
+ * @returns {boolean} True if valid IP address
  */
 function isValidIp(ip: string): boolean {
 	return isIpv4(ip) || isIpv6(ip);
 }
 
 /**
- * Normalize IP address
+ * Normalize IP address format
+ *
+ * Removes IPv6 prefixes, ports, brackets, and other formatting.
+ *
+ * @internal
+ * @param {string} ip - IP address to normalize
+ * @returns {string} Normalized IP address
  */
 function normalizeIp(ip: string): string {
 	if (!ip) return ip;
@@ -387,14 +486,36 @@ function normalizeIp(ip: string): string {
 }
 
 /**
- * Create a secure IP extractor with your configuration
+ * Function type for IP extraction
+ * @callback IpExtractor
+ * @template T
+ * @param {Context<T>} ctx - Request context
+ * @returns {string | undefined} Extracted IP
  */
-function createSecureIpExtractor(config: Required<IpExtractionConfig>) {
+type IpExtractor = <T extends Record<string, unknown>>(ctx: Context<T>) => string | undefined;
+
+/**
+ * Create a secure IP extractor function with configuration
+ *
+ * @internal
+ * @param {Required<IpExtractionConfig>} config - Configuration
+ * @returns {IpExtractor} IP extractor function
+ */
+function createSecureIpExtractor(config: Required<IpExtractionConfig>): IpExtractor {
 	return <T extends Record<string, unknown>>(ctx: Context<T>) => secureExtractClientIp(ctx, config);
 }
 
 /**
- * Example configurations for common scenarios
+ * Predefined configurations for common deployment scenarios
+ *
+ * @example
+ * ```typescript
+ * // Use a preset
+ * app.use(ipExtract("cloudflare"));
+ *
+ * // Access preset configuration
+ * const cloudflareConfig = IP_EXTRACTION_PRESETS.cloudflare;
+ * ```
  */
 export const IP_EXTRACTION_PRESETS = {
 	/**
@@ -472,5 +593,7 @@ export const IP_EXTRACTION_PRESETS = {
 	} as IpExtractionConfig,
 } as const;
 
-// Export types
+/**
+ * Type for available IP extraction presets
+ */
 export type IpExtractionPreset = keyof typeof IP_EXTRACTION_PRESETS;
