@@ -1,4 +1,4 @@
-import type { Context, Middleware } from "../../core/src";
+import type { Context, Middleware } from "@rabbit-company/web";
 
 /**
  * Options for configuring the Bearer Token Authentication middleware.

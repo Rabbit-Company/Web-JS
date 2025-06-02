@@ -1,4 +1,4 @@
-import type { Context, Middleware } from "../../core/src";
+import type { Context, Middleware } from "@rabbit-company/web";
 import { Logger, Levels, ConsoleTransport } from "@rabbit-company/logger";
 
 /**
