@@ -173,6 +173,180 @@ app.use(
 - `formatErrorMessage`: Custom error log format function
 - `onLog`: Callback function called after logging
 
+### Cache
+
+High-performance HTTP caching middleware with support for multiple storage backends, conditional requests, and stale-while-revalidate.
+
+```js
+import { cache, MemoryCache, LRUCache, RedisCache } from "@rabbit-company/web-middleware";
+
+// Basic in-memory caching
+app.use(cache());
+
+// LRU cache with max 500 entries
+app.use(
+	cache({
+		storage: new LRUCache(500),
+		ttl: 600, // 10 minutes
+	})
+);
+
+// Redis cache for distributed caching
+import Redis from "ioredis";
+const redis = new Redis();
+
+app.use(
+	cache({
+		storage: new RedisCache(redis),
+		ttl: 3600, // 1 hour
+		staleWhileRevalidate: true,
+		maxStaleAge: 86400, // 24 hours
+	})
+);
+
+// Advanced configuration
+app.use(
+	cache({
+		storage: new MemoryCache(),
+		ttl: 300, // 5 minutes default
+		methods: ["GET", "HEAD"], // Only cache GET/HEAD requests
+
+		// Custom cache key generation
+		keyGenerator: (ctx) => {
+			const url = new URL(ctx.req.url);
+			const userId = ctx.get("user")?.id || "anonymous";
+			return `${ctx.req.method}:${url.pathname}:${userId}`;
+		},
+
+		// Conditional caching
+		shouldCache: (ctx, res) => {
+			// Only cache successful responses
+			if (res.status < 200 || res.status >= 300) return false;
+
+			// Don't cache if response is too large
+			const size = res.headers.get("content-length");
+			if (size && parseInt(size) > 1024 * 1024) return false; // 1MB limit
+
+			return true;
+		},
+
+		// Vary cache by headers
+		varyHeaders: ["accept", "accept-encoding", "accept-language"],
+
+		// Respect Cache-Control headers
+		respectCacheControl: true,
+
+		// Path filtering
+		excludePaths: ["/api/auth", "/api/admin", /^\/ws/],
+		includePaths: ["/api/public", "/api/products"],
+	})
+);
+
+// Conditional requests (ETag support)
+app.get("/api/data", cache({ ttl: 3600 }), async (ctx) => {
+	const data = await getExpensiveData();
+	return ctx.json(data);
+	// Middleware automatically generates ETag and handles If-None-Match
+});
+
+// Stale-while-revalidate pattern
+app.use(
+	cache({
+		ttl: 60, // Fresh for 1 minute
+		staleWhileRevalidate: true,
+		maxStaleAge: 3600, // Serve stale for up to 1 hour while revalidating
+	})
+);
+
+// Cache invalidation
+import { cacheUtils } from "@rabbit-company/web-middleware";
+
+// Invalidate specific cache keys
+app.post(
+	"/api/posts",
+	createPost,
+	cacheUtils.invalidate({
+		storage: cache.storage,
+		keys: ["GET:/api/posts", "GET:/api/posts/latest"],
+	})
+);
+
+// Pattern-based invalidation (Redis only)
+app.put(
+	"/api/posts/:id",
+	updatePost,
+	cacheUtils.invalidate({
+		storage: redisCache,
+		patterns: ["GET:/api/posts/*", "GET:/api/users/*/posts"],
+	})
+);
+
+// Clear entire cache
+await cacheUtils.clear(cache.storage);
+
+// Get cache statistics
+const stats = await cacheUtils.stats(cache.storage);
+console.log(`Cache size: ${stats.size} entries`);
+
+// Custom storage implementation
+class CustomStorage {
+	async get(key) {
+		/* ... */
+	}
+	async set(key, entry, ttl, maxStaleAge) {
+		/* ... */
+	}
+	async delete(key) {
+		/* ... */
+	}
+	async clear() {
+		/* ... */
+	}
+	async has(key) {
+		/* ... */
+	}
+	async size() {
+		/* ... */
+	}
+}
+
+app.use(cache({ storage: new CustomStorage() }));
+```
+
+#### Storage Backends:
+
+- **MemoryCache**: In-memory storage with automatic expiry
+- **LRUCache**: Least Recently Used eviction when size limit reached
+- **RedisCache**: Distributed caching with Redis
+
+#### Options:
+
+- `storage`: Cache storage backend (default: MemoryCache)
+- `ttl`: Time to live in seconds (default: 300)
+- `methods`: HTTP methods to cache (default: ["GET", "HEAD"])
+- `keyGenerator`: Custom cache key generation function
+- `shouldCache`: Function to determine if response should be cached
+- `varyHeaders`: Headers to include in cache key (default: ["accept", "accept-encoding"])
+- `respectCacheControl`: Honor Cache-Control headers (default: true)
+- `addCacheHeader`: Add X-Cache-Status header (default: true)
+- `cacheHeaderName`: Custom cache status header name (default: "x-cache-status")
+- `cachePrivate`: Cache private responses (default: false)
+- `excludePaths`: Paths to exclude from caching
+- `includePaths`: Only cache these paths (if set)
+- `staleWhileRevalidate`: Serve stale content while revalidating (default: false)
+- `maxStaleAge`: Maximum stale age in seconds (default: 86400)
+
+#### Features:
+
+- Automatic ETag generation and conditional request handling
+- Stale-while-revalidate for better performance
+- Cache-Control header support
+- Vary header support for content negotiation
+- Pattern-based invalidation with Redis
+- Background revalidation for stale content
+- Distributed caching with Redis backend
+- Memory efficient with configurable storage limits
+
 ### Bearer Auth
 
 Token-based authentication for APIs.
