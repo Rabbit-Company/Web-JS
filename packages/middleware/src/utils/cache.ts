@@ -2,30 +2,95 @@ import type { Context, Middleware } from "../../../core/src";
 import { createHash } from "crypto";
 
 /**
- * Cache storage interface that all cache backends must implement
+ * Cache storage interface that all cache backends must implement.
+ * Provides a consistent API for different storage mechanisms (memory, Redis, etc.)
+ *
+ * @interface CacheStorage
  */
 export interface CacheStorage {
+	/**
+	 * Retrieve a cache entry by key
+	 * @param {string} key - The cache key
+	 * @returns {Promise<CacheEntry | null>} The cache entry or null if not found
+	 */
 	get(key: string): Promise<CacheEntry | null>;
+
+	/**
+	 * Store a cache entry
+	 * @param {string} key - The cache key
+	 * @param {CacheEntry} entry - The cache entry to store
+	 * @param {number} [ttl] - Time to live in seconds
+	 * @param {number} [maxStaleAge] - Maximum stale age in seconds for stale-while-revalidate
+	 * @returns {Promise<void>}
+	 */
 	set(key: string, entry: CacheEntry, ttl?: number, maxStaleAge?: number): Promise<void>;
+
+	/**
+	 * Delete a cache entry
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if the entry was deleted, false otherwise
+	 */
 	delete(key: string): Promise<boolean>;
+
+	/**
+	 * Clear all cache entries
+	 * @returns {Promise<void>}
+	 */
 	clear(): Promise<void>;
+
+	/**
+	 * Check if a cache entry exists
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if the entry exists, false otherwise
+	 */
 	has(key: string): Promise<boolean>;
+
+	/**
+	 * Get the number of entries in the cache
+	 * @returns {Promise<number>} The number of cache entries
+	 */
 	size(): Promise<number>;
 }
 
 /**
  * Cached response data structure
+ *
+ * @interface CacheEntry
  */
 export interface CacheEntry {
+	/** HTTP status code */
 	status: number;
+	/** Response headers */
 	headers: Record<string, string>;
+	/** Response body as string */
 	body: string;
+	/** Timestamp when the entry was cached */
 	timestamp: number;
+	/** ETag value for conditional requests */
 	etag?: string;
 }
 
 /**
+ * Function signature for generating cache keys
+ * @callback KeyGenerator
+ * @param {Context<any>} ctx - The request context
+ * @returns {string} The generated cache key
+ */
+type KeyGenerator = (ctx: Context<any>) => string;
+
+/**
+ * Function signature for determining if a response should be cached
+ * @callback ShouldCacheFunction
+ * @param {Context<any>} ctx - The request context
+ * @param {Response} res - The response
+ * @returns {boolean} True if the response should be cached
+ */
+type ShouldCacheFunction = (ctx: Context<any>, res: Response) => boolean;
+
+/**
  * Cache middleware configuration options
+ *
+ * @interface CacheConfig
  */
 export interface CacheConfig {
 	/**
@@ -41,20 +106,22 @@ export interface CacheConfig {
 	ttl?: number;
 
 	/**
-	 * Methods to cache
+	 * HTTP methods to cache
 	 * @default ['GET', 'HEAD']
 	 */
 	methods?: string[];
 
 	/**
 	 * Function to generate cache key from request
+	 * @default (ctx) => `${ctx.req.method}:${ctx.req.url}`
 	 */
-	keyGenerator?: (ctx: Context<any>) => string;
+	keyGenerator?: KeyGenerator;
 
 	/**
 	 * Function to determine if response should be cached
+	 * @default (ctx, res) => res.status >= 200 && res.status < 300
 	 */
-	shouldCache?: (ctx: Context<any>, res: Response) => boolean;
+	shouldCache?: ShouldCacheFunction;
 
 	/**
 	 * Headers to vary cache by
@@ -94,6 +161,7 @@ export interface CacheConfig {
 
 	/**
 	 * Paths to include for caching (if set, only these paths are cached)
+	 * @default undefined
 	 */
 	includePaths?: (string | RegExp)[];
 
@@ -111,12 +179,41 @@ export interface CacheConfig {
 }
 
 /**
- * In-memory cache implementation
+ * Storage item with expiry information
+ * @internal
+ */
+interface MemoryCacheItem {
+	/** The cached entry */
+	entry: CacheEntry;
+	/** Expiry timestamp for fresh content */
+	expiry?: number;
+	/** Delete timestamp for stale content */
+	deleteAt?: number;
+}
+
+/**
+ * In-memory cache implementation with automatic expiry
+ *
+ * @class MemoryCache
+ * @implements {CacheStorage}
+ * @example
+ * ```typescript
+ * const cache = new MemoryCache();
+ * await cache.set("key", entry, 300); // Cache for 5 minutes
+ * const cached = await cache.get("key");
+ * ```
  */
 export class MemoryCache implements CacheStorage {
-	private cache = new Map<string, { entry: CacheEntry; expiry?: number; deleteAt?: number }>();
+	/** Internal storage map */
+	private cache = new Map<string, MemoryCacheItem>();
+	/** Cleanup timers map */
 	private timers = new Map<string, NodeJS.Timeout>();
 
+	/**
+	 * Retrieve a cache entry
+	 * @param {string} key - The cache key
+	 * @returns {Promise<CacheEntry | null>} The cache entry or null
+	 */
 	async get(key: string): Promise<CacheEntry | null> {
 		const item = this.cache.get(key);
 		if (!item) return null;
@@ -132,6 +229,14 @@ export class MemoryCache implements CacheStorage {
 		return item.entry;
 	}
 
+	/**
+	 * Store a cache entry with automatic expiry
+	 * @param {string} key - The cache key
+	 * @param {CacheEntry} entry - The cache entry
+	 * @param {number} [ttl] - Time to live in seconds
+	 * @param {number} [maxStaleAge] - Maximum stale age in seconds
+	 * @returns {Promise<void>}
+	 */
 	async set(key: string, entry: CacheEntry, ttl?: number, maxStaleAge?: number): Promise<void> {
 		// Clear existing timer
 		const existingTimer = this.timers.get(key);
@@ -156,6 +261,11 @@ export class MemoryCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Delete a cache entry
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if deleted
+	 */
 	async delete(key: string): Promise<boolean> {
 		const timer = this.timers.get(key);
 		if (timer) {
@@ -165,6 +275,10 @@ export class MemoryCache implements CacheStorage {
 		return this.cache.delete(key);
 	}
 
+	/**
+	 * Clear all cache entries and timers
+	 * @returns {Promise<void>}
+	 */
 	async clear(): Promise<void> {
 		// Clear all timers
 		for (const timer of this.timers.values()) {
@@ -174,6 +288,11 @@ export class MemoryCache implements CacheStorage {
 		this.cache.clear();
 	}
 
+	/**
+	 * Check if a cache entry exists
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if exists
+	 */
 	async has(key: string): Promise<boolean> {
 		const item = this.cache.get(key);
 		if (!item) return false;
@@ -187,6 +306,10 @@ export class MemoryCache implements CacheStorage {
 		return true;
 	}
 
+	/**
+	 * Get the number of entries in the cache
+	 * @returns {Promise<number>} The size
+	 */
 	async size(): Promise<number> {
 		// Clean up expired entries first
 		const now = Date.now();
@@ -200,16 +323,46 @@ export class MemoryCache implements CacheStorage {
 }
 
 /**
+ * LRU cache item with expiry
+ * @internal
+ */
+interface LRUCacheItem {
+	/** The cached entry */
+	entry: CacheEntry;
+	/** Expiry timestamp */
+	expiry?: number;
+}
+
+/**
  * LRU (Least Recently Used) cache implementation
+ *
+ * @class LRUCache
+ * @implements {CacheStorage}
+ * @example
+ * ```typescript
+ * const cache = new LRUCache(1000); // Max 1000 entries
+ * await cache.set("key", entry);
+ * ```
  */
 export class LRUCache implements CacheStorage {
-	private cache = new Map<string, { entry: CacheEntry; expiry?: number }>();
+	/** Internal storage map */
+	private cache = new Map<string, LRUCacheItem>();
+	/** Maximum number of entries */
 	private maxSize: number;
 
+	/**
+	 * Create a new LRU cache
+	 * @param {number} [maxSize=1000] - Maximum number of entries
+	 */
 	constructor(maxSize = 1000) {
 		this.maxSize = maxSize;
 	}
 
+	/**
+	 * Get a cache entry and update its position
+	 * @param {string} key - The cache key
+	 * @returns {Promise<CacheEntry | null>} The cache entry or null
+	 */
 	async get(key: string): Promise<CacheEntry | null> {
 		const item = this.cache.get(key);
 		if (!item) return null;
@@ -227,6 +380,14 @@ export class LRUCache implements CacheStorage {
 		return item.entry;
 	}
 
+	/**
+	 * Store a cache entry
+	 * @param {string} key - The cache key
+	 * @param {CacheEntry} entry - The cache entry
+	 * @param {number} [ttl] - Time to live in seconds
+	 * @param {number} [maxStaleAge] - Maximum stale age (unused in LRU)
+	 * @returns {Promise<void>}
+	 */
 	async set(key: string, entry: CacheEntry, ttl?: number, maxStaleAge?: number): Promise<void> {
 		// Delete if exists to update position
 		this.cache.delete(key);
@@ -244,14 +405,28 @@ export class LRUCache implements CacheStorage {
 		this.cache.set(key, { entry, expiry });
 	}
 
+	/**
+	 * Delete a cache entry
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if deleted
+	 */
 	async delete(key: string): Promise<boolean> {
 		return this.cache.delete(key);
 	}
 
+	/**
+	 * Clear all cache entries
+	 * @returns {Promise<void>}
+	 */
 	async clear(): Promise<void> {
 		this.cache.clear();
 	}
 
+	/**
+	 * Check if a cache entry exists
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if exists
+	 */
 	async has(key: string): Promise<boolean> {
 		const item = this.cache.get(key);
 		if (!item) return false;
@@ -265,18 +440,31 @@ export class LRUCache implements CacheStorage {
 		return true;
 	}
 
+	/**
+	 * Get the number of entries in the cache
+	 * @returns {Promise<number>} The size
+	 */
 	async size(): Promise<number> {
 		return this.cache.size;
 	}
 }
 
 /**
- * Parse Cache-Control header
+ * Cache control directives type
  */
-function parseCacheControl(header: string | null): Record<string, string | boolean> {
+type CacheControlDirectives = Record<string, string | boolean>;
+
+/**
+ * Parse Cache-Control header into directives
+ * @param {string | null} header - The Cache-Control header value
+ * @returns {CacheControlDirectives} Parsed directives
+ * @example
+ * parseCacheControl("max-age=300, public") // { "max-age": "300", "public": true }
+ */
+function parseCacheControl(header: string | null): CacheControlDirectives {
 	if (!header) return {};
 
-	const directives: Record<string, string | boolean> = {};
+	const directives: CacheControlDirectives = {};
 	const parts = header.split(",").map((p) => p.trim());
 
 	for (const part of parts) {
@@ -289,8 +477,10 @@ function parseCacheControl(header: string | null): Record<string, string | boole
 
 /**
  * Calculate TTL from Cache-Control header
+ * @param {CacheControlDirectives} cacheControl - Parsed cache control directives
+ * @returns {number | null} TTL in seconds or null
  */
-function getTTLFromCacheControl(cacheControl: Record<string, string | boolean>): number | null {
+function getTTLFromCacheControl(cacheControl: CacheControlDirectives): number | null {
 	if (cacheControl["no-store"] || cacheControl["no-cache"]) {
 		return 0;
 	}
@@ -313,7 +503,9 @@ function getTTLFromCacheControl(cacheControl: Record<string, string | boolean>):
 }
 
 /**
- * Generate ETag from response body
+ * Generate ETag from response body using BLAKE2b-512
+ * @param {string} body - The response body
+ * @returns {Promise<string>} The generated ETag
  */
 async function generateETag(body: string): Promise<string> {
 	return createHash("blake2b512").update(body).digest("hex");
@@ -321,6 +513,9 @@ async function generateETag(body: string): Promise<string> {
 
 /**
  * Check if path matches any pattern in the list
+ * @param {string} path - The path to match
+ * @param {(string | RegExp)[]} patterns - Array of patterns
+ * @returns {boolean} True if matches any pattern
  */
 function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
 	return patterns.some((pattern) => {
@@ -334,22 +529,36 @@ function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
 /**
  * Cache middleware factory
  *
+ * Creates a caching middleware that stores and serves responses from cache
+ * based on the provided configuration.
+ *
+ * @template T - Context type parameter
+ * @param {CacheConfig} [config={}] - Cache configuration
+ * @returns {Middleware<T>} Cache middleware function
+ *
  * @example
  * ```typescript
- * // Basic usage
+ * // Basic usage with default configuration
  * app.use(cache());
  *
- * // With custom configuration
+ * // Custom configuration with LRU cache
  * app.use(cache({
  *   ttl: 600, // 10 minutes
  *   storage: new LRUCache(500),
  *   excludePaths: ['/api/auth', /^\/admin/]
  * }));
+ *
+ * // With Redis cache
+ * app.use(cache({
+ *   storage: new RedisCache(redisClient),
+ *   staleWhileRevalidate: true,
+ *   maxStaleAge: 3600 // 1 hour
+ * }));
  * ```
  */
 export function cache<T extends Record<string, unknown> = Record<string, unknown>>(config: CacheConfig = {}): Middleware<T> {
 	// Apply defaults
-	const options = {
+	const options: Required<Omit<CacheConfig, "includePaths">> & Pick<CacheConfig, "includePaths"> = {
 		storage: new MemoryCache(),
 		ttl: 300,
 		methods: ["GET", "HEAD"],
@@ -360,8 +569,8 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		addCacheHeader: true,
 		cacheHeaderName: "x-cache-status",
 		cachePrivate: false,
-		excludePaths: [] as (string | RegExp)[],
-		includePaths: undefined as (string | RegExp)[] | undefined,
+		excludePaths: [],
+		includePaths: undefined,
 		staleWhileRevalidate: false,
 		maxStaleAge: 86400,
 		...config,
@@ -370,8 +579,14 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 	// Background revalidation tracker
 	const revalidating = new Set<string>();
 
-	// Store response in cache
-	async function storeCachedResponse(key: string, response: Response, cacheControl?: Record<string, string | boolean>) {
+	/**
+	 * Store response in cache
+	 * @param {string} key - Cache key
+	 * @param {Response} response - Response to cache
+	 * @param {CacheControlDirectives} [cacheControl] - Parsed cache control
+	 * @returns {Promise<void>}
+	 */
+	async function storeCachedResponse(key: string, response: Response, cacheControl?: CacheControlDirectives): Promise<void> {
 		// Check if response is cacheable
 		if (options.respectCacheControl) {
 			const cc = cacheControl || parseCacheControl(response.headers.get("cache-control"));
@@ -551,6 +766,7 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 									await storeCachedResponse(cacheKey, bgResponse.clone());
 								}
 							} catch {
+								// Ignore revalidation errors
 							} finally {
 								revalidating.delete(cacheKey);
 							}
@@ -618,31 +834,84 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 }
 
 /**
+ * Redis client interface
+ * @interface RedisClient
+ */
+interface RedisClient {
+	/** Get a value by key */
+	get(key: string): Promise<string | null>;
+	/** Set a value */
+	set(key: string, value: string): Promise<"OK">;
+	/** Set a value with expiry */
+	setex(key: string, seconds: number, value: string): Promise<"OK">;
+	/** Delete one or more keys */
+	del(...keys: string[]): Promise<number>;
+	/** Check if key exists */
+	exists(key: string): Promise<number>;
+	/** Get keys by pattern */
+	keys(pattern: string): Promise<string[]>;
+	/** Scan keys */
+	scan(cursor: string, ...args: any[]): Promise<[string, string[]]>;
+}
+
+/**
  * Redis cache implementation
- * Requires a Redis client that supports the following methods:
- * - get(key): Promise<string | null>
- * - set(key, value): Promise<"OK">
- * - setex(key, seconds, value): Promise<"OK">
- * - del(...keys): Promise<number>
- * - exists(key): Promise<number>
- * - keys(pattern): Promise<string[]>
- * - scan(cursor, options): Promise<[string, string[]]>
+ *
+ * Provides cache storage using Redis as the backend.
+ * Supports all standard cache operations plus pattern-based deletion.
+ *
+ * @class RedisCache
+ * @implements {CacheStorage}
+ *
+ * @example
+ * ```typescript
+ * // With ioredis
+ * import Redis from 'ioredis';
+ * const redis = new Redis();
+ * const cache = new RedisCache(redis);
+ *
+ * // With node-redis
+ * import { createClient } from 'redis';
+ * const client = createClient();
+ * await client.connect();
+ * const cache = new RedisCache(client);
+ * ```
  */
 export class RedisCache implements CacheStorage {
-	private client: any;
+	/** Redis client instance */
+	private client: RedisClient;
+	/** Key prefix for namespacing */
 	private keyPrefix: string;
+	/** Number of keys to scan at once */
 	private scanCount: number;
 
-	constructor(client: any, keyPrefix = "cache:", scanCount = 100) {
+	/**
+	 * Create a new Redis cache instance
+	 * @param {RedisClient} client - Redis client instance
+	 * @param {string} [keyPrefix="cache:"] - Prefix for all cache keys
+	 * @param {number} [scanCount=100] - Number of keys to scan per iteration
+	 */
+	constructor(client: RedisClient, keyPrefix = "cache:", scanCount = 100) {
 		this.client = client;
 		this.keyPrefix = keyPrefix;
 		this.scanCount = scanCount;
 	}
 
+	/**
+	 * Get the full Redis key with prefix
+	 * @private
+	 * @param {string} key - The cache key
+	 * @returns {string} The prefixed key
+	 */
 	private getKey(key: string): string {
 		return `${this.keyPrefix}${key}`;
 	}
 
+	/**
+	 * Get a cache entry from Redis
+	 * @param {string} key - The cache key
+	 * @returns {Promise<CacheEntry | null>} The cache entry or null
+	 */
 	async get(key: string): Promise<CacheEntry | null> {
 		try {
 			const data = await this.client.get(this.getKey(key));
@@ -656,6 +925,14 @@ export class RedisCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Store a cache entry in Redis
+	 * @param {string} key - The cache key
+	 * @param {CacheEntry} entry - The cache entry
+	 * @param {number} [ttl] - Time to live in seconds
+	 * @param {number} [maxStaleAge] - Maximum stale age in seconds
+	 * @returns {Promise<void>}
+	 */
 	async set(key: string, entry: CacheEntry, ttl?: number, maxStaleAge?: number): Promise<void> {
 		const data = JSON.stringify(entry);
 		const redisKey = this.getKey(key);
@@ -674,6 +951,11 @@ export class RedisCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Delete a cache entry from Redis
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if deleted
+	 */
 	async delete(key: string): Promise<boolean> {
 		try {
 			const result = await this.client.del(this.getKey(key));
@@ -683,6 +965,11 @@ export class RedisCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Clear all cache entries
+	 * Uses SCAN to avoid blocking Redis
+	 * @returns {Promise<void>}
+	 */
 	async clear(): Promise<void> {
 		try {
 			// Use SCAN to avoid blocking Redis with KEYS command
@@ -703,6 +990,11 @@ export class RedisCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Check if a cache entry exists
+	 * @param {string} key - The cache key
+	 * @returns {Promise<boolean>} True if exists
+	 */
 	async has(key: string): Promise<boolean> {
 		try {
 			const exists = await this.client.exists(this.getKey(key));
@@ -712,6 +1004,11 @@ export class RedisCache implements CacheStorage {
 		}
 	}
 
+	/**
+	 * Get the number of cache entries
+	 * Uses SCAN to avoid blocking Redis
+	 * @returns {Promise<number>} The number of entries
+	 */
 	async size(): Promise<number> {
 		try {
 			// Use SCAN to count keys without blocking
@@ -735,6 +1032,15 @@ export class RedisCache implements CacheStorage {
 	/**
 	 * Delete multiple keys by pattern (Redis-specific feature)
 	 * Useful for cache invalidation
+	 * @param {string} pattern - Pattern to match keys (supports * and ?)
+	 * @returns {Promise<number>} Number of keys deleted
+	 * @example
+	 * ```typescript
+	 * // Delete all POST cache entries
+	 * await cache.deletePattern("POST:*");
+	 * // Delete all entries for a specific path
+	 * await cache.deletePattern("GET:/api/users/*");
+	 * ```
 	 */
 	async deletePattern(pattern: string): Promise<number> {
 		try {
@@ -761,7 +1067,25 @@ export class RedisCache implements CacheStorage {
 }
 
 /**
+ * Redis cache creation options
+ * @interface RedisCreateOptions
+ */
+export interface RedisCreateOptions {
+	/** Key prefix for namespacing */
+	keyPrefix?: string;
+	/** Number of keys to scan per iteration */
+	scanCount?: number;
+}
+
+/**
  * Create a Redis cache instance with common Redis clients
+ *
+ * Helper function to create a Redis cache with proper configuration.
+ * Supports both ioredis and node-redis clients.
+ *
+ * @param {RedisClient} client - Redis client instance
+ * @param {RedisCreateOptions} [options] - Redis cache options
+ * @returns {RedisCache} Configured Redis cache instance
  *
  * @example
  * ```typescript
@@ -776,26 +1100,107 @@ export class RedisCache implements CacheStorage {
  * await client.connect();
  * const cache = createRedisCache(client);
  *
+ * // With custom options
+ * const cache = createRedisCache(redis, {
+ *   keyPrefix: 'myapp:cache:',
+ *   scanCount: 200
+ * });
+ *
  * // Use in middleware
  * app.use(cache({ storage: cache }));
  * ```
  */
-export function createRedisCache(
-	client: any,
-	options?: {
-		keyPrefix?: string;
-		scanCount?: number;
-	}
-): RedisCache {
+export function createRedisCache(client: RedisClient, options?: RedisCreateOptions): RedisCache {
 	return new RedisCache(client, options?.keyPrefix, options?.scanCount);
 }
 
 /**
- * Cache invalidation utilities
+ * Cache invalidation options
+ * @interface CacheInvalidateOptions
  */
-export const cacheUtils = {
+export interface CacheInvalidateOptions {
+	/** Cache storage to invalidate */
+	storage: CacheStorage;
+	/** Patterns to match for invalidation (Redis only) */
+	patterns?: (string | RegExp)[];
+	/** Specific keys to invalidate */
+	keys?: string[];
+}
+
+/**
+ * Cache utility functions interface
+ * @interface CacheUtils
+ */
+export interface CacheUtils {
 	/**
 	 * Create a cache invalidation middleware
+	 * @template T - Context type parameter
+	 * @param {CacheInvalidateOptions} options - Invalidation options
+	 * @returns {Middleware<T>} Invalidation middleware
+	 */
+	invalidate<T extends Record<string, unknown> = Record<string, unknown>>(options: CacheInvalidateOptions): Middleware<T>;
+
+	/**
+	 * Clear entire cache
+	 * @param {CacheStorage} storage - Cache storage to clear
+	 * @returns {Promise<void>}
+	 */
+	clear(storage: CacheStorage): Promise<void>;
+
+	/**
+	 * Get cache statistics
+	 * @param {CacheStorage} storage - Cache storage
+	 * @returns {Promise<{ size: number }>} Cache statistics
+	 */
+	stats(storage: CacheStorage): Promise<{ size: number }>;
+}
+
+/**
+ * Cache invalidation utilities
+ *
+ * Provides utility functions for cache management including
+ * invalidation, clearing, and statistics.
+ *
+ * @type {CacheUtils}
+ * @example
+ * ```typescript
+ * // Invalidate specific keys after mutation
+ * app.post('/posts',
+ *   createPost,
+ *   cacheUtils.invalidate({
+ *     storage: redisCache,
+ *     keys: ['GET:/posts', 'GET:/posts/latest']
+ *   })
+ * );
+ *
+ * // Invalidate by patterns (Redis only)
+ * app.put('/posts/:id',
+ *   updatePost,
+ *   cacheUtils.invalidate({
+ *     storage: redisCache,
+ *     patterns: ['GET:/posts', 'GET:/posts/*']
+ *   })
+ * );
+ *
+ * // Clear entire cache
+ * await cacheUtils.clear(cache);
+ *
+ * // Get cache statistics
+ * const stats = await cacheUtils.stats(cache);
+ * console.log(`Cache has ${stats.size} entries`);
+ * ```
+ */
+export const cacheUtils: CacheUtils = {
+	/**
+	 * Create a cache invalidation middleware
+	 *
+	 * Invalidates cache entries after successful mutations.
+	 * Supports both specific key invalidation and pattern-based
+	 * invalidation for Redis.
+	 *
+	 * @template T - Context type parameter
+	 * @param {CacheInvalidateOptions} options - Invalidation options
+	 * @returns {Middleware<T>} Middleware function
 	 *
 	 * @example
 	 * ```typescript
@@ -818,11 +1223,7 @@ export const cacheUtils = {
 	 * );
 	 * ```
 	 */
-	invalidate<T extends Record<string, unknown> = Record<string, unknown>>(options: {
-		storage: CacheStorage;
-		patterns?: (string | RegExp)[];
-		keys?: string[];
-	}): Middleware<T> {
+	invalidate<T extends Record<string, unknown> = Record<string, unknown>>(options: CacheInvalidateOptions): Middleware<T> {
 		return async (ctx, next) => {
 			const response = await next();
 
@@ -855,6 +1256,17 @@ export const cacheUtils = {
 
 	/**
 	 * Clear entire cache
+	 *
+	 * Removes all entries from the cache storage.
+	 *
+	 * @param {CacheStorage} storage - Cache storage to clear
+	 * @returns {Promise<void>}
+	 *
+	 * @example
+	 * ```typescript
+	 * // Clear all cache entries
+	 * await cacheUtils.clear(cache);
+	 * ```
 	 */
 	clear(storage: CacheStorage): Promise<void> {
 		return storage.clear();
@@ -862,6 +1274,18 @@ export const cacheUtils = {
 
 	/**
 	 * Get cache statistics
+	 *
+	 * Returns information about the cache including the number
+	 * of stored entries.
+	 *
+	 * @param {CacheStorage} storage - Cache storage
+	 * @returns {Promise<{ size: number }>} Cache statistics
+	 *
+	 * @example
+	 * ```typescript
+	 * const stats = await cacheUtils.stats(cache);
+	 * console.log(`Cache has ${stats.size} entries`);
+	 * ```
 	 */
 	async stats(storage: CacheStorage): Promise<{ size: number }> {
 		return {
