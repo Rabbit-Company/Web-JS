@@ -329,3 +329,175 @@ export interface Route<T extends Record<string, unknown> = Record<string, unknow
 	/** Array of middleware handlers for this route */
 	handlers: Middleware<T>[];
 }
+
+/**
+ * Server instance returned by the listen method.
+ * Provides a unified interface for controlling servers across different runtimes.
+ */
+export interface Server {
+	/** The port number the server is listening on */
+	port: number;
+	/** The hostname/IP address the server is bound to */
+	hostname: string;
+	/** The runtime name ('bun', 'deno', or 'node') */
+	runtime: "bun" | "deno" | "node";
+	/**
+	 * Stops the server gracefully.
+	 * @returns {Promise<void>} Promise that resolves when the server is fully stopped
+	 */
+	stop(): Promise<void>;
+	/** The underlying runtime-specific server instance */
+	instance: unknown;
+}
+
+/**
+ * Node.js specific server options for HTTP/HTTPS configuration.
+ */
+export interface NodeServerOptions {
+	/**
+	 * Enable HTTPS server instead of HTTP.
+	 * @default false
+	 */
+	https?: boolean;
+	/**
+	 * TLS private key for HTTPS server.
+	 * Required when https is true.
+	 */
+	key?: string | Buffer;
+	/**
+	 * TLS certificate for HTTPS server.
+	 * Required when https is true.
+	 */
+	cert?: string | Buffer;
+}
+
+/**
+ * Deno specific server options.
+ */
+export interface DenoServerOptions {
+	/** TLS private key file path or content */
+	key?: string;
+	/** TLS certificate file path or content */
+	cert?: string;
+	/**
+	 * Application-Layer Protocol Negotiation protocols.
+	 * @example ['h2', 'http/1.1']
+	 */
+	alpnProtocols?: string[];
+}
+
+/**
+ * Bun specific TLS configuration.
+ */
+export interface BunTlsOptions {
+	/** TLS private key */
+	key?: string | Buffer | Array<string | Buffer>;
+	/** TLS certificate */
+	cert?: string | Buffer | Array<string | Buffer>;
+	/** TLS certificate authority */
+	ca?: string | Buffer | Array<string | Buffer>;
+	/** Passphrase for the private key */
+	passphrase?: string;
+	/** Diffie-Hellman parameters */
+	dhParamsFile?: string;
+	/** Minimum TLS version */
+	secureOptions?: number;
+}
+
+/**
+ * Bun specific server options.
+ */
+export interface BunServerOptions {
+	/** TLS configuration for HTTPS */
+	tls?: BunTlsOptions;
+	/**
+	 * Maximum allowed request body size in bytes.
+	 * @default 128 * 1024 * 1024 (128MB)
+	 */
+	maxRequestBodySize?: number;
+	/** WebSocket handler configuration */
+	websocket?: unknown;
+	/** Server name for the Server header */
+	serverName?: string;
+	/** Enable HTTP/2 support */
+	reusePort?: boolean;
+}
+
+/**
+ * Callback function invoked when the server starts listening.
+ */
+export type ListenCallback = (info: {
+	/** The port the server is listening on */
+	port: number;
+	/** The hostname the server is bound to */
+	hostname: string;
+	/** The runtime name */
+	runtime: "bun" | "deno" | "node";
+}) => void;
+
+/**
+ * Configuration options for starting a server with the listen method.
+ */
+export interface ListenOptions {
+	/**
+	 * Port number to listen on.
+	 * @default 3000
+	 */
+	port?: number;
+	/**
+	 * Hostname or IP address to bind to.
+	 * Use '0.0.0.0' to listen on all interfaces.
+	 * @default 'localhost'
+	 */
+	hostname?: string;
+	/**
+	 * Callback function invoked when the server starts successfully.
+	 * Receives server information including port, hostname, and runtime.
+	 */
+	onListen?: ListenCallback;
+	/**
+	 * Node.js specific server options.
+	 * Only used when running in Node.js runtime.
+	 */
+	node?: NodeServerOptions;
+	/**
+	 * Deno specific server options.
+	 * Only used when running in Deno runtime.
+	 */
+	deno?: DenoServerOptions;
+	/**
+	 * Bun specific server options.
+	 * Only used when running in Bun runtime.
+	 */
+	bun?: BunServerOptions;
+}
+
+/**
+ * Type definition for Node.js HTTP/HTTPS server instance.
+ * @internal
+ */
+export interface NodeServerInstance {
+	listen(port: number, hostname: string, callback?: () => void): void;
+	close(callback?: (err?: Error) => void): void;
+	on(event: string, listener: (...args: any[]) => void): void;
+	off(event: string, listener: (...args: any[]) => void): void;
+}
+
+/**
+ * Type definition for Deno server instance.
+ * @internal
+ */
+export interface DenoServerInstance {
+	finished: Promise<void>;
+	shutdown(): Promise<void>;
+}
+
+/**
+ * Type definition for Bun server instance.
+ * @internal
+ */
+export interface BunServerInstance {
+	port: number;
+	hostname?: string;
+	stop(): void;
+}

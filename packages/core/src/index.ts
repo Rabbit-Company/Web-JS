@@ -1,4 +1,34 @@
-import type { Context, MatchResult, Method, Middleware, MiddlewareRoute, Next, Route } from "./types";
+import type {
+	BunServerInstance,
+	Context,
+	DenoServerInstance,
+	ListenOptions,
+	MatchResult,
+	Method,
+	Middleware,
+	MiddlewareRoute,
+	Next,
+	NodeServerInstance,
+	Route,
+	Server,
+} from "./types";
+
+/**
+ * Runtime detection utilities for identifying the current JavaScript runtime environment.
+ * @internal
+ */
+const Runtime = {
+	/** True if running in Bun runtime */
+	isBun: typeof globalThis !== "undefined" && typeof (globalThis as any).Bun !== "undefined",
+	/** True if running in Deno runtime */
+	isDeno: typeof globalThis !== "undefined" && typeof (globalThis as any).Deno !== "undefined",
+	/** True if running in Node.js runtime */
+	isNode:
+		typeof globalThis !== "undefined" &&
+		typeof (globalThis as any).process !== "undefined" &&
+		typeof (globalThis as any).Bun === "undefined" &&
+		typeof (globalThis as any).Deno === "undefined",
+};
 
 /**
  * A node in the trie data structure used for efficient route matching.
@@ -1711,7 +1741,206 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				res.writeHead(500, { "Content-Type": "text/plain" });
 			}
 			res.end("Internal Server Error");
-			console.error("Error in handleNode:", error);
+		}
+	}
+
+	/**
+	 * Starts a server with automatic runtime detection.
+	 * Automatically selects the appropriate server implementation based on the runtime environment.
+	 *
+	 * @param {ListenOptions} options - Server configuration options
+	 * @returns {Promise<Server>} Promise that resolves to a Server instance
+	 * @throws {Error} If the runtime is not supported
+	 *
+	 * @example
+	 * ```typescript
+	 * // Basic usage with default options
+	 * const server = await app.listen({ port: 3000 });
+	 * console.log(`Server running on ${server.runtime} at http://localhost:${server.port}`);
+	 *
+	 * // With startup callback
+	 * await app.listen({
+	 *   port: 8080,
+	 *   hostname: '0.0.0.0',
+	 *   onListen: ({ port, hostname, runtime }) => {
+	 *     console.log(`✅ ${runtime} server running at http://${hostname}:${port}`);
+	 *   }
+	 * });
+	 *
+	 * // With HTTPS in Node.js
+	 * await app.listen({
+	 *   port: 443,
+	 *   node: {
+	 *     https: true,
+	 *     key: fs.readFileSync('./key.pem'),
+	 *     cert: fs.readFileSync('./cert.pem')
+	 *   }
+	 * });
+	 *
+	 * // With TLS in Deno
+	 * await app.listen({
+	 *   port: 443,
+	 *   deno: {
+	 *     key: './key.pem',
+	 *     cert: './cert.pem'
+	 *   }
+	 * });
+	 *
+	 * // With TLS in Bun
+	 * await app.listen({
+	 *   port: 443,
+	 *   bun: {
+	 *     tls: {
+	 *       key: Bun.file('./key.pem'),
+	 *       cert: Bun.file('./cert.pem')
+	 *     }
+	 *   }
+	 * });
+	 *
+	 * // Gracefully stop the server
+	 * await server.stop();
+	 * ```
+	 */
+	async listen(options: ListenOptions = {}): Promise<Server> {
+		const { port = 3000, hostname = "localhost", onListen, node: nodeOptions = {}, deno: denoOptions = {}, bun: bunOptions = {} } = options;
+
+		// Detect runtime and start appropriate server
+		if (Runtime.isBun) {
+			// Bun runtime
+			const bunGlobal = globalThis as any;
+			const serverConfig: Record<string, any> = {
+				port,
+				hostname,
+				fetch: this.handleBun.bind(this),
+				...bunOptions,
+			};
+
+			const bunServer = bunGlobal.Bun.serve(serverConfig) as BunServerInstance;
+
+			const server: Server = {
+				port: bunServer.port,
+				hostname: bunServer.hostname || hostname,
+				runtime: "bun",
+				instance: bunServer,
+				stop: async (): Promise<void> => {
+					bunServer.stop();
+				},
+			};
+
+			if (onListen) {
+				onListen({
+					port: server.port,
+					hostname: server.hostname,
+					runtime: server.runtime,
+				});
+			}
+
+			return server;
+		} else if (Runtime.isDeno) {
+			// Deno runtime
+			const denoGlobal = globalThis as any;
+			const serverConfig: Record<string, any> = {
+				port,
+				hostname,
+				...denoOptions,
+			};
+
+			const handler = (req: Request, info: unknown): Promise<Response> => {
+				return this.handleDeno(req, info);
+			};
+
+			const denoServer = denoGlobal.Deno.serve(serverConfig, handler) as DenoServerInstance;
+
+			const server: Server = {
+				port,
+				hostname,
+				runtime: "deno",
+				instance: denoServer,
+				stop: async (): Promise<void> => {
+					await denoServer.shutdown();
+				},
+			};
+
+			if (onListen) {
+				onListen({
+					port: server.port,
+					hostname: server.hostname,
+					runtime: server.runtime,
+				});
+			}
+
+			return server;
+		} else if (Runtime.isNode) {
+			// Node.js runtime
+			const module: "http" | "https" = nodeOptions.https ? "https" : "http";
+			const { createServer } = await import(module);
+
+			let nodeServer: NodeServerInstance;
+
+			const requestHandler = (req: any, res: any): void => {
+				this.handleNode(req, res).catch((err: Error) => {
+					if (!res.headersSent) {
+						res.writeHead(500, { "Content-Type": "text/plain" });
+						res.end("Internal Server Error");
+					}
+				});
+			};
+
+			if (nodeOptions.https) {
+				// HTTPS server
+				const httpsOptions: Record<string, any> = {
+					key: nodeOptions.key,
+					cert: nodeOptions.cert,
+				};
+				nodeServer = (createServer as any)(httpsOptions, requestHandler) as NodeServerInstance;
+			} else {
+				// HTTP server
+				nodeServer = createServer(requestHandler) as NodeServerInstance;
+			}
+
+			// Start listening
+			await new Promise<void>((resolve, reject) => {
+				const errorHandler = (err: Error): void => {
+					reject(err);
+				};
+
+				nodeServer.on("error", errorHandler);
+
+				nodeServer.listen(port, hostname, () => {
+					nodeServer.off("error", errorHandler);
+					resolve();
+				});
+			});
+
+			const server: Server = {
+				port,
+				hostname,
+				runtime: "node",
+				instance: nodeServer,
+				stop: async (): Promise<void> => {
+					return new Promise<void>((resolve, reject) => {
+						nodeServer.close((err?: Error) => {
+							if (err) {
+								reject(err);
+							} else {
+								resolve();
+							}
+						});
+					});
+				},
+			};
+
+			if (onListen) {
+				onListen({
+					port: server.port,
+					hostname: server.hostname,
+					runtime: server.runtime,
+				});
+			}
+
+			return server;
+		} else {
+			throw new Error(`Unsupported runtime. This framework supports Bun, Deno, and Node.js.`);
 		}
 	}
 }

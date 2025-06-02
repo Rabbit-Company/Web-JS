@@ -7,9 +7,4 @@ app.use(cors());
 
 app.get("/", async (ctx) => ctx.html(`<h1>Hello World from ${ctx.clientIp}</h1>`));
 
-Deno.serve(
-	{
-		port: 8080,
-	},
-	(req, info) => app.handleDeno(req, info)
-);
+app.listen({ port: 3000 });

@@ -72,10 +72,7 @@ app.get("/api/profile", (ctx) => {
 });
 
 // Start server
-Bun.serve({
-	port: 3000,
-	fetch: app.handle,
-});
+app.listen({ port: 3000 });
 
 console.log("Server running at http://localhost:3000");
 ```

@@ -543,39 +543,12 @@ app.onError((err, ctx) => {
 
 // ===== SERVER CONFIGURATION =====
 
-const PORT = parseInt(process.env.PORT || "8080");
+const PORT = parseInt(process.env.PORT || "3000");
 const HOSTNAME = "0.0.0.0";
 
-// Create Bun server with WebSocket support
-const server = Bun.serve({
-	port: PORT,
+const server = await app.listen({
 	hostname: HOSTNAME,
-
-	fetch: app.handleBun,
-
-	// WebSocket configuration
-	websocket: {
-		open(ws) {
-			console.log("WebSocket opened");
-			ws.send(JSON.stringify({ type: "welcome", message: "Connected to WebSocket" }));
-		},
-
-		message(ws, message) {
-			console.log("WebSocket message:", message);
-			// Echo the message back
-			ws.send(JSON.stringify({ type: "echo", data: message }));
-		},
-
-		close(ws) {
-			console.log("WebSocket closed");
-		},
-	},
-
-	// Server error handler
-	error(error) {
-		console.error("Server error:", error);
-		return new Response("Internal Server Error", { status: 500 });
-	},
+	port: PORT,
 });
 
 // Graceful shutdown
