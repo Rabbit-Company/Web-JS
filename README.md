@@ -38,23 +38,32 @@ const app = new Web<{ user?: { id: string } }>();
 
 // Middleware
 app.use(async (ctx, next) => {
-  console.log(`${ctx.req.method} ${ctx.req.url}`);
-  await next();
+	console.log(`${ctx.req.method} ${ctx.req.url}`);
+	await next();
 });
 
 // Routes
 app.get('/', (ctx) => ctx.text('Hello Bun! 🐇'));
 
 app.get('/users/:id', async (ctx) => {
-  const user = await getUser(ctx.params.id);
-  return ctx.json(user);
+	const user = await getUser(ctx.params.id);
+	return ctx.json(user);
 });
 
-// Start server
+// Start with Bun server
 Bun.serve({
-  port: 3000,
-  fetch: app.handle
+	port: 3000,
+	fetch: app.handleBun
 });
+
+// Start with Deno server
+Deno.serve({ port: 3000 },
+	(req, info) => app.handleDeno(req, info)
+);
+
+// Start with Node server
+import { createServer } from "http";
+createServer((req, res) => app.handleNode(req, res)).listen(3000);
 
 console.log('Server running at http://localhost:3000');
 ```
@@ -121,17 +130,17 @@ app.use(async (ctx, next) => {
 
 // Path-specific middleware (chainable)
 app.use("/admin", adminAuthMiddleware)
-   .use("POST", "/users", validateUserMiddleware);
+	 .use("POST", "/users", validateUserMiddleware);
 
 // Middleware with removal capability
 const authId = app.addMiddleware('/admin', (ctx, next) => {
-  // Authentication logic
-  await next();
+	// Authentication logic
+	await next();
 });
 
 const loggingId = app.addMiddleware(async (ctx, next) => {
-  console.log(`${ctx.req.method} ${ctx.req.url}`);
-  await next();
+	console.log(`${ctx.req.method} ${ctx.req.url}`);
+	await next();
 });
 
 // Remove middleware
