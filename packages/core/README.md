@@ -50,11 +50,20 @@ app.get('/users/:id', async (ctx) => {
   return ctx.json(user);
 });
 
-// Start server
+// Start with Bun server
 Bun.serve({
   port: 3000,
-  fetch: app.handle
+  fetch: app.handleBun
 });
+
+// Start with Deno server
+Deno.serve({ port: 3000 },
+	(req, info) => app.handleDeno(req, info)
+);
+
+// Start with Node server
+import { createServer } from "http";
+createServer((req, res) => app.handleNode(req, res)).listen(3000);
 
 console.log('Server running at http://localhost:3000');
 ```

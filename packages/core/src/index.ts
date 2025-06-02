@@ -1396,36 +1396,21 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	/**
-	 * Request handler optimized for Bun runtime with automatic IP extraction.
-	 * Uses Bun's server.requestIP() for reliable client IP detection.
+	 * Internal handler that processes requests with a known client IP.
+	 * This is the common implementation used by both runtime-specific handlers.
 	 *
 	 * @param req - The incoming Request object
-	 * @param server - Bun.Server instance for accessing runtime-specific features
+	 * @param clientIp - The client IP address (optional)
 	 * @returns Promise that resolves to a Response object
 	 *
-	 * @example
-	 * ```typescript
-	 * const server = Bun.serve({
-	 *   port: 3000,
-	 *   hostname: 'localhost',
-	 *   fetch: (req, server) => app.handleBun(req, server)
-	 * });
-	 *
-	 * // Or using shorthand
-	 * const server = Bun.serve({
-	 *   port: 3000,
-	 *   fetch: app.handleBun
-	 * });
-	 * ```
+	 * @internal
 	 */
-	async handleBun(req: Request, server: Bun.Server): Promise<Response> {
+	private async handleWithIp(req: Request, clientIp?: string): Promise<Response> {
 		const method = req.method as Method;
 		const parsedUrl = this.parseUrl(req.url);
 		const path = parsedUrl.pathname;
 
 		try {
-			const clientIp = server.requestIP(req)?.address;
-
 			// Match route first
 			const matched = this.match(method, path);
 			if (!matched) {
@@ -1557,6 +1542,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 					req,
 					params: EMPTY_PARAMS,
 					state: {} as T,
+					clientIp,
 					// Minimal implementations for error handling
 					text: (data, status = 500) => new Response(data, { status }),
 					json: (data, status = 500) =>
@@ -1579,6 +1565,153 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 				return this.errorHandler(err as Error, errorCtx);
 			}
 			return new Response("Internal Server Error", { status: 500 });
+		}
+	}
+
+	/**
+	 * Request handler optimized for Bun runtime with automatic IP extraction.
+	 * Uses Bun's server request info for reliable client IP detection.
+	 *
+	 * @param req - The incoming Request object
+	 * @param server - Bun server instance
+	 * @returns Promise that resolves to a Response object
+	 *
+	 * @example
+	 * ```typescript
+	 * Bun.serve({
+	 *   port: 3000,
+	 *   hostname: 'localhost',
+	 *   fetch: app.handleBun
+	 * });
+	 * ```
+	 */
+	async handleBun(req: Request, server: unknown): Promise<Response> {
+		// Extract client IP from Bun's server object
+		const clientIp = (server as any)?.requestIP?.(req)?.address;
+		return this.handleWithIp(req, clientIp);
+	}
+
+	/**
+	 * Request handler optimized for Deno runtime with automatic IP extraction.
+	 * Uses Deno's ServeHandlerInfo for reliable client IP detection.
+	 *
+	 * @param req - The incoming Request object
+	 * @param info - Deno.ServeHandlerInfo instance for accessing runtime-specific features
+	 * @returns Promise that resolves to a Response object
+	 *
+	 * @example
+	 * ```typescript
+	 * Deno.serve({
+	 *     port: 3000
+	 *   },
+	 *   (req, info) => app.handleDeno(req, info)
+	 * );
+	 * ```
+	 */
+	async handleDeno(req: Request, info: unknown): Promise<Response> {
+		// Extract client IP from Deno's ServeHandlerInfo
+		const clientIp = (info as any)?.remoteAddr?.hostname;
+		return this.handleWithIp(req, clientIp);
+	}
+
+	/**
+	 * Request handler for Node.js that handles both request and response.
+	 * Automatically converts between Node.js and Web APIs and extracts client IP.
+	 *
+	 * @param nodeReq - Node.js IncomingMessage object
+	 * @param nodeRes - Node.js ServerResponse object
+	 * @returns Promise that resolves when response is sent
+	 *
+	 * @example
+	 * ```typescript
+	 * import { createServer } from "http";
+	 *
+	 * createServer((req, res) => app.handleNode(req, res)).listen(3000);
+	 * ```
+	 */
+	async handleNode(nodeReq: unknown, nodeRes: unknown): Promise<void> {
+		const req = nodeReq as any;
+		const res = nodeRes as any;
+
+		try {
+			// Extract client IP from Node.js request
+			const clientIp: string | undefined = req.socket?.remoteAddress;
+
+			// Convert Node.js request to Web Request
+			const host = req.headers.host || "localhost";
+			const protocol = req.socket?.encrypted ? "https" : "http";
+			const url = `${protocol}://${host}${req.url}`;
+
+			// Create headers
+			const headers = new Headers();
+			for (const [key, value] of Object.entries(req.headers)) {
+				if (value) {
+					if (Array.isArray(value)) {
+						value.forEach((v) => headers.append(key, v));
+					} else {
+						headers.set(key, value as string);
+					}
+				}
+			}
+
+			// Handle request body
+			let body: BodyInit | null = null;
+			if (req.method !== "GET" && req.method !== "HEAD") {
+				// Collect body data
+				const chunks: Buffer[] = [];
+				await new Promise<void>((resolve, reject) => {
+					req.on("data", (chunk: Buffer) => chunks.push(chunk));
+					req.on("end", () => resolve());
+					req.on("error", reject);
+				});
+
+				if (chunks.length > 0) {
+					body = Buffer.concat(chunks);
+				}
+			}
+
+			// Create Web Request
+			const webRequest = new Request(url, {
+				method: req.method,
+				headers,
+				body,
+				// @ts-ignore - Node.js doesn't have duplex, but it's safe to ignore
+				duplex: "half",
+			});
+
+			// Handle the request with extracted IP
+			const response = await this.handleWithIp(webRequest, clientIp);
+
+			// Convert Web Response to Node.js response
+			const responseHeaders: Record<string, string> = {};
+			response.headers.forEach((value, key) => {
+				responseHeaders[key] = value;
+			});
+
+			res.writeHead(response.status, responseHeaders);
+
+			// Stream the response body
+			if (response.body) {
+				const reader = response.body.getReader();
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+						res.write(value);
+					}
+				} finally {
+					reader.releaseLock();
+				}
+			}
+
+			res.end();
+		} catch (error) {
+			// Handle errors
+			if (!res.headersSent) {
+				res.writeHead(500, { "Content-Type": "text/plain" });
+			}
+			res.end("Internal Server Error");
+			console.error("Error in handleNode:", error);
 		}
 	}
 }

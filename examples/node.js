@@ -1,0 +1,8 @@
+import { createServer } from "http";
+import { Web } from "../packages/core/dist/index.js";
+
+const app = new Web();
+
+app.get("/", async (ctx) => ctx.html(`<h1>Hello World from ${ctx.clientIp}</h1>`));
+
+createServer((req, res) => app.handleNode(req, res)).listen(3000);

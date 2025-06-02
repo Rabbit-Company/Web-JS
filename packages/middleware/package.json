@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
