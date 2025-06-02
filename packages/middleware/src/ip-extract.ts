@@ -1,4 +1,4 @@
-import type { Context, Middleware } from "../../../core/src";
+import type { Context, Middleware } from "../../core/src";
 
 /**
  * Secure IP extraction configuration

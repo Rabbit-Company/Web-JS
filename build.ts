@@ -93,74 +93,17 @@ async function buildAllMiddleware() {
 
 	try {
 		// Build auth middleware individually
-		const authFiles = await fs.readdir(`${middlewarePath}/auth`);
-		for (const file of authFiles) {
+		const files = await fs.readdir(`${middlewarePath}/`);
+		for (const file of files) {
 			if (file.endsWith(".ts") && file !== "index.ts") {
 				const name = file.replace(".ts", "");
 				await Bun.build({
-					entrypoints: [`${middlewarePath}/auth/${file}`],
-					outdir: `${distPath}/auth`,
+					entrypoints: [`${middlewarePath}/${file}`],
+					outdir: `${distPath}`,
 					target: "node",
 					format: "esm",
 					plugins: [dts({ output: { noBanner: true } })],
 				});
-			}
-		}
-
-		// Build security middleware individually
-		const securityPath = `${middlewarePath}/security`;
-		try {
-			const securityFiles = await fs.readdir(securityPath);
-			for (const file of securityFiles) {
-				if (file.endsWith(".ts") && file !== "index.ts") {
-					const name = file.replace(".ts", "");
-					await Bun.build({
-						entrypoints: [`${securityPath}/${file}`],
-						outdir: `${distPath}/security`,
-						target: "node",
-						format: "esm",
-						plugins: [dts({ output: { noBanner: true } })],
-					});
-				}
-			}
-		} catch (error) {
-			logger.warn("Security middleware directory not found, skipping...");
-		}
-
-		// Build utils middleware individually
-		const utilsPath = `${middlewarePath}/utils`;
-		try {
-			const utilFiles = await fs.readdir(utilsPath);
-			for (const file of utilFiles) {
-				if (file.endsWith(".ts") && file !== "index.ts") {
-					const name = file.replace(".ts", "");
-					await Bun.build({
-						entrypoints: [`${utilsPath}/${file}`],
-						outdir: `${distPath}/utils`,
-						target: "node",
-						format: "esm",
-						plugins: [dts({ output: { noBanner: true } })],
-					});
-				}
-			}
-		} catch (error) {
-			logger.warn("Utils middleware directory not found, skipping...");
-		}
-
-		// Build category index files
-		const categories = ["auth", "security", "utils"];
-		for (const category of categories) {
-			try {
-				await fs.access(`${middlewarePath}/${category}/index.ts`);
-				await Bun.build({
-					entrypoints: [`${middlewarePath}/${category}/index.ts`],
-					outdir: `${distPath}/${category}`,
-					target: "node",
-					format: "esm",
-					plugins: [dts({ output: { noBanner: true } })],
-				});
-			} catch (error) {
-				logger.warn(`${category} index file not found, skipping...`);
 			}
 		}
 
@@ -179,19 +122,15 @@ async function main() {
 	// Build core package
 	const coreSuccess = await buildPackage("core", "index.ts", "web");
 
-	// Build middleware package main bundle
-	const middlewareSuccess = await buildPackage("middleware", "index.ts");
-
 	// Build individual middleware files for tree-shaking
 	const individualSuccess = await buildAllMiddleware();
 
-	if (coreSuccess && middlewareSuccess && individualSuccess) {
+	if (coreSuccess && individualSuccess) {
 		logger.info("All packages built successfully!");
 
 		// Log build summary
 		logger.info("Build Summary:");
 		logger.info("  ✓ Core package: packages/core/dist/");
-		logger.info("  ✓ Middleware package: packages/middleware/dist/");
 		logger.info("  ✓ Individual middleware files for tree-shaking");
 	} else {
 		logger.error("Some packages failed to build");

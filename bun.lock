@@ -11,7 +11,7 @@
         "@types/bun": "latest",
         "bun-plugin-dts": "^0.3.0",
         "elysia": "^1.3.3",
-        "hono": "^4.7.10",
+        "hono": "^4.7.11",
       },
       "peerDependencies": {
         "typescript": "^5",
@@ -19,7 +19,7 @@
     },
     "packages/core": {
       "name": "@rabbit-company/web",
-      "version": "0.3.0",
+      "version": "0.5.0",
       "devDependencies": {
         "@types/bun": "latest",
       },
@@ -29,7 +29,7 @@
     },
     "packages/middleware": {
       "name": "@rabbit-company/web-middleware",
-      "version": "0.3.0",
+      "version": "0.5.0",
       "dependencies": {
         "@rabbit-company/logger": "^5.5.0",
         "@rabbit-company/rate-limiter": "^3.0.0",
@@ -38,7 +38,7 @@
         "@types/bun": "latest",
       },
       "peerDependencies": {
-        "@rabbit-company/web": "^0.2.0",
+        "@rabbit-company/web": "^0.4.0",
         "typescript": "^5",
       },
     },
@@ -102,7 +102,7 @@
 
     "get-tsconfig": ["get-tsconfig@4.10.1", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-auHyJ4AgMz7vgS8Hp3N6HXSmlMdUyhSUrfBF16w153rxtLIEOE+HGqaBppczZvnHLqQJfiHotCYpNhl0lUROFQ=="],
 
-    "hono": ["hono@4.7.10", "", {}, "sha512-QkACju9MiN59CKSY5JsGZCYmPZkA6sIW6OFCUp7qDjZu6S6KHtJHhAc9Uy9mV9F8PJ1/HQ3ybZF2yjCa/73fvQ=="],
+    "hono": ["hono@4.7.11", "", {}, "sha512-rv0JMwC0KALbbmwJDEnxvQCeJh+xbS3KEWW5PC9cMJ08Ur9xgatI0HmtgYZfOdOSOeYsp5LO2cOhdI8cLEbDEQ=="],
 
     "ieee754": ["ieee754@1.2.1", "", {}, "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA=="],
 

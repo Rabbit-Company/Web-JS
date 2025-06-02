@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { Web } from "../../../packages/core/src";
-import { cache, MemoryCache, LRUCache, cacheUtils, type CacheStorage } from "../../../packages/middleware/src/utils/cache";
+import { Web } from "../../packages/core/src";
+import { cache, MemoryCache, type CacheStorage } from "../../packages/middleware/src/cache";
 
 describe("Cache Middleware", () => {
 	let app: Web<{ user?: { id?: string } }>;

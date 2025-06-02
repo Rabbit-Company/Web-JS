@@ -1,5 +1,9 @@
 import { Web } from "../packages/core/src";
-import { basicAuth, bearerAuth, cors, logger, rateLimit } from "../packages/middleware/src";
+import { basicAuth } from "../packages/middleware/src/basic-auth";
+import { bearerAuth } from "../packages/middleware/src/bearer-auth";
+import { cors } from "../packages/middleware/src/cors";
+import { logger } from "../packages/middleware/src/logger";
+import { rateLimit } from "../packages/middleware/src/rate-limit";
 
 /**
  * Web Framework Usage Examples

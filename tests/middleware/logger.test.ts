@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { logger, Levels } from "../../../packages/middleware/src/utils/logger";
-import type { Context } from "../../../packages/core/src";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { logger, Levels } from "../../packages/middleware/src/logger";
+import type { Context } from "../../packages/core/src";
 
 class MockLogger {
 	public logs: Array<{ level: number; message: string; metadata?: any }> = [];

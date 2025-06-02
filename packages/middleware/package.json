@@ -1,9 +1,7 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
 	"funding": "https://rabbit-company.com/donation",
@@ -11,46 +9,33 @@
 	"license": "MIT",
 	"private": false,
 	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"require": "./dist/index.cjs"
+		"./basic-auth": {
+			"types": "./dist/basic-auth.d.ts",
+			"import": "./dist/basic-auth.js"
 		},
-		"./auth": {
-			"types": "./dist/auth/index.d.ts",
-			"import": "./dist/auth/index.js"
+		"./bearer-auth": {
+			"types": "./dist/bearer-auth.d.ts",
+			"import": "./dist/bearer-auth.js"
 		},
-		"./auth/bearer": {
-			"types": "./dist/auth/bearer.d.ts",
-			"import": "./dist/auth/bearer.js"
+		"./cache": {
+			"types": "./dist/cache.d.ts",
+			"import": "./dist/cache.js"
 		},
-		"./auth/basic": {
-			"types": "./dist/auth/basic.d.ts",
-			"import": "./dist/auth/basic.js"
+		"./cors": {
+			"types": "./dist/cors.d.ts",
+			"import": "./dist/cors.js"
 		},
-		"./security": {
-			"types": "./dist/security/index.d.ts",
-			"import": "./dist/security/index.js"
+		"./ip-extract": {
+			"types": "./dist/ip-extract.d.ts",
+			"import": "./dist/ip-extract.js"
 		},
-		"./security/cors": {
-			"types": "./dist/security/cors.d.ts",
-			"import": "./dist/security/cors.js"
+		"./logger": {
+			"types": "./dist/logger.d.ts",
+			"import": "./dist/logger.js"
 		},
-		"./security/rate-limit": {
-			"types": "./dist/security/rate-limit.d.ts",
-			"import": "./dist/security/rate-limit.js"
-		},
-		"./utils": {
-			"types": "./dist/utils/index.d.ts",
-			"import": "./dist/utils/index.js"
-		},
-		"./utils/logger": {
-			"types": "./dist/utils/logger.d.ts",
-			"import": "./dist/utils/logger.js"
-		},
-		"./utils/ip-extract": {
-			"types": "./dist/utils/ip-extract.d.ts",
-			"import": "./dist/utils/ip-extract.js"
+		"./rate-limit": {
+			"types": "./dist/rate-limit.d.ts",
+			"import": "./dist/rate-limit.js"
 		}
 	},
 	"scripts": {
@@ -76,14 +61,16 @@
 		"email": "info@rabbit-company.com"
 	},
 	"keywords": [
-		"middleware",
-		"auth",
-		"security",
-		"cors",
-		"rate-limit",
-		"logging",
+		"rabbit-company",
 		"web-framework",
-		"rabbit-company"
+		"middleware",
+		"basic-auth",
+		"bearer-auth",
+		"cache",
+		"cors",
+		"ip-extract",
+		"logging",
+		"rate-limit"
 	],
 	"peerDependencies": {
 		"@rabbit-company/web": "^0.4.0",

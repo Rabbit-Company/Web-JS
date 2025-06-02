@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { Web } from "../../../packages/core/src";
-import { ipExtract, getClientIp, IP_EXTRACTION_PRESETS } from "../../../packages/middleware/src/utils/ip-extract";
+import { Web } from "../../packages/core/src";
+import { ipExtract, getClientIp, IP_EXTRACTION_PRESETS } from "../../packages/middleware/src/ip-extract";
 
 describe("IP Extract Middleware", () => {
 	let app: Web;

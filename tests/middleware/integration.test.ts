@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Web } from "../../packages/core";
-import { cors, basicAuth, rateLimit } from "../../packages/middleware/src";
+import { cors } from "../../packages/middleware/src/cors";
+import { basicAuth } from "../../packages/middleware/src/basic-auth";
+import { rateLimit } from "../../packages/middleware/src/rate-limit";
 
 describe("Middleware Integration", () => {
 	let app: Web<{ user?: any; auth?: any }>;

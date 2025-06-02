@@ -1,4 +1,4 @@
-import type { Context, Middleware } from "../../../core/src";
+import type { Context, Middleware } from "../../core/src";
 import { RateLimiter, Algorithm } from "@rabbit-company/rate-limiter";
 import type { RateLimitConfig, RateLimitResult } from "@rabbit-company/rate-limiter";
 

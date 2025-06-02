@@ -24,7 +24,10 @@ deno add @rabbit-company/web-middleware
 
 ```js
 import { Web } from "@rabbit-company/web";
-import { bearerAuth, cors, logger, rateLimit } from "@rabbit-company/web-middleware";
+import { bearerAuth } from "@rabbit-company/web-middleware/basic-auth";
+import { cors } from "@rabbit-company/web-middleware/cors";
+import { logger } from "@rabbit-company/web-middleware/logger";
+import { rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 
 const app = new Web();
 
@@ -92,6 +95,8 @@ console.log("Server running at http://localhost:3000");
 ### 📊 Utils
 
 - **Logger** - HTTP request/response logging with customizable formats
+- **Cache** - Response caching using pluggable backends like in-memory, LRU, or Redis for improved performance and reduced server load.
+- **IP Extract** - Parses the incoming request's IP address, respecting common proxy headers (X-Forwarded-For, X-Real-IP) and attaches it to the request context.
 
 ## 📚 Middleware Documentation
 
@@ -100,7 +105,7 @@ console.log("Server running at http://localhost:3000");
 Comprehensive HTTP request/response logging middleware using @rabbit-company/logger.
 
 ```js
-import { logger } from "@rabbit-company/web-middleware";
+import { logger } from "@rabbit-company/web-middleware/logger";
 
 // Minimal logging (clean output)
 app.use(logger({ preset: "minimal" }));
@@ -178,7 +183,7 @@ app.use(
 High-performance HTTP caching middleware with support for multiple storage backends, conditional requests, and stale-while-revalidate.
 
 ```js
-import { cache, MemoryCache, LRUCache, RedisCache } from "@rabbit-company/web-middleware";
+import { cache, MemoryCache, LRUCache, RedisCache } from "@rabbit-company/web-middleware/cache";
 
 // Basic in-memory caching
 app.use(cache());
@@ -352,7 +357,7 @@ app.use(cache({ storage: new CustomStorage() }));
 Token-based authentication for APIs.
 
 ```js
-import { bearerAuth } from "@rabbit-company/web-middleware";
+import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 
 // Simple API key validation
 app.use(
@@ -437,7 +442,7 @@ app.get("/api/profile", bearerAuth({ validate }), (ctx) => {
 HTTP Basic Authentication for simple username/password protection. Automatically handles base64 decoding and credential parsing.
 
 ```js
-import { basicAuth } from "@rabbit-company/web-middleware";
+import { basicAuth } from "@rabbit-company/web-middleware/basic-auth";
 
 // Simple validation
 app.use(
@@ -531,7 +536,7 @@ app.use("/admin", adminAuth, async (ctx, next) => {
 Configure Cross-Origin Resource Sharing.
 
 ```js
-import { cors } from "@rabbit-company/web-middleware";
+import { cors } from "@rabbit-company/web-middleware/cors";
 
 app.use(
 	cors({
@@ -570,7 +575,7 @@ app.use(
 Advanced rate limiting with multiple algorithms to prevent API abuse and ensure fair usage..
 
 ```js
-import { rateLimit, Algorithm, createRateLimiter } from "@rabbit-company/web-middleware";
+import { rateLimit, Algorithm, createRateLimiter } from "@rabbit-company/web-middleware/rate-limit";
 
 // Basic rate limiting - Fixed Window (default)
 app.use(

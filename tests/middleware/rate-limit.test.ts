@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web } from "../../../packages/core/src";
-import { rateLimit, createRateLimiter, createKeyGenerator, Algorithm } from "../../../packages/middleware/src/security/rate-limit";
+import { Web } from "../../packages/core/src";
+import { rateLimit, createRateLimiter, createKeyGenerator, Algorithm } from "../../packages/middleware/src/rate-limit";
 
 describe("Rate Limit Middleware", () => {
 	let app: Web;
