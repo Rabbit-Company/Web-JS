@@ -3,13 +3,13 @@
 	"version": "0.5.0",
 	"license": "MIT",
 	"exports": {
-		"./basic-auth": "./basic-auth.ts",
-		"./bearer-auth": "./bearer-auth.ts",
-		"./cache": "./cache.ts",
-		"./cors": "./cors.ts",
-		"./ip-extract": "./ip-extract.ts",
-		"./logger": "./logger.ts",
-		"./rate-limit": "./rate-limit.ts"
+		"./basic-auth": "./src/basic-auth.ts",
+		"./bearer-auth": "./src/bearer-auth.ts",
+		"./cache": "./src/cache.ts",
+		"./cors": "./src/cors.ts",
+		"./ip-extract": "./src/ip-extract.ts",
+		"./logger": "./src/logger.ts",
+		"./rate-limit": "./src/rate-limit.ts"
 	},
 	"publish": {
 		"include": ["README.md", "src/"]
