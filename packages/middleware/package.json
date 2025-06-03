@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.8.0",
+	"version": "0.9.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
@@ -32,6 +32,10 @@
 		"./ip-extract": {
 			"types": "./dist/ip-extract.d.ts",
 			"import": "./dist/ip-extract.js"
+		},
+		"./ip-restriction": {
+			"types": "./dist/ip-restriction.d.ts",
+			"import": "./dist/ip-restriction.js"
 		},
 		"./logger": {
 			"types": "./dist/logger.d.ts",
@@ -74,6 +78,7 @@
 		"cache",
 		"cors",
 		"ip-extract",
+		"ip-restriction",
 		"logging",
 		"rate-limit"
 	],

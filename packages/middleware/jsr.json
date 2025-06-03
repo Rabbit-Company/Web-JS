@@ -1,13 +1,15 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.8.0",
+	"version": "0.9.0",
 	"license": "MIT",
 	"exports": {
 		"./basic-auth": "./src/basic-auth.ts",
 		"./bearer-auth": "./src/bearer-auth.ts",
+		"./body-limit": "./src/body-limit.ts",
 		"./cache": "./src/cache.ts",
 		"./cors": "./src/cors.ts",
 		"./ip-extract": "./src/ip-extract.ts",
+		"./ip-restriction": "./src/ip-restriction.ts",
 		"./logger": "./src/logger.ts",
 		"./rate-limit": "./src/rate-limit.ts"
 	},

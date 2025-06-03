@@ -88,6 +88,7 @@ console.log("Server running at http://localhost:3000");
 
 - [**CORS**](#cors) - Cross-Origin Resource Sharing
 - [**Rate Limit**](#rate-limit) - Request rate limiting with multiple algorithms
+- [**IP Restriction**](#ip-restriction) - Limits access to resources based on the IP address
 
 ### 📊 Utils
 
@@ -940,6 +941,149 @@ if (process.env.NODE_ENV === "development") {
 - The `development` preset is insecure - only for local testing
 - Test your configuration with tools like `curl -H "X-Forwarded-For: fake"`
 - Consider using cloud provider presets for automatic secure configuration
+
+### IP Restriction
+
+Control access to your application by allowing or blocking specific IP addresses and CIDR ranges. Supports both whitelist and blacklist modes with IPv4/IPv6.
+
+```js
+import { ipRestriction, ipRestrictionPresets, createDynamicIpRestriction } from "@rabbit-company/web-middleware/ip-restriction";
+
+// Whitelist mode - only allow specific IPs
+app.use(ipRestriction({
+  mode: "whitelist",
+  ips: ["192.168.1.0/24", "10.0.0.1", "::1"],
+  message: "Access restricted to internal network"
+}));
+
+// Blacklist mode - block specific IPs
+app.use(ipRestriction({
+  mode: "blacklist",
+  ips: ["192.168.1.100", "10.0.0.0/16"],
+  logDenied: true,
+  logger: (message, ip) => console.log(`Blocked: ${ip}`)
+}));
+
+// Use presets for common scenarios
+app.use(ipRestriction(ipRestrictionPresets.localhostOnly()));
+app.use(ipRestriction(ipRestrictionPresets.privateNetworkOnly()));
+
+// Behind a proxy? Use with ipExtract
+app.use(ipExtract("cloudflare"));
+app.use(ipRestriction({
+  mode: "whitelist",
+  ips: ["203.0.113.0/24"]
+}));
+
+// Protect admin routes
+app.use("/admin", ipRestriction({
+  mode: "whitelist",
+  ips: ["10.0.0.0/8"],
+  message: (ip) => `Access denied for ${ip}. Admin panel is restricted.`,
+  statusCode: 401
+}));
+
+// Skip restriction for authenticated users
+app.use(ipRestriction({
+  mode: "blacklist",
+  ips: knownBadIps,
+  skip: async (ctx) => {
+    const user = ctx.get("user");
+    return user?.role === "admin" || user?.verified === true;
+  }
+}));
+
+// Dynamic IP management
+const restriction = createDynamicIpRestriction({
+  mode: "blacklist",
+  ips: [],
+  logDenied: true
+});
+
+app.use(restriction.middleware);
+
+// Ban IPs dynamically
+app.post("/api/security/ban", async (ctx) => {
+  const { ip } = await ctx.req.json();
+  restriction.addIp(ip);
+  return ctx.json({ banned: ip });
+});
+
+// Unban IPs
+app.post("/api/security/unban", async (ctx) => {
+  const { ip } = await ctx.req.json();
+  restriction.removeIp(ip);
+  return ctx.json({ unbanned: ip });
+});
+
+// Different restrictions for different environments
+const ipConfig = process.env.NODE_ENV === "production"
+  ? {
+      mode: "whitelist" as const,
+      ips: ["10.0.0.0/8", "172.16.0.0/12"] // Private networks only
+    }
+  : ipRestrictionPresets.localhostOnly(); // Dev: localhost only
+
+app.use(ipRestriction(ipConfig));
+
+// Debug headers for testing
+app.use(ipRestriction({
+  mode: "whitelist",
+  ips: ["192.168.1.0/24"],
+  setHeader: true,
+  headerName: "X-IP-Status" // Response will include X-IP-Status: allowed/denied
+}));
+
+// Complex CIDR ranges with IPv6
+app.use(ipRestriction({
+  mode: "whitelist",
+  ips: [
+    // IPv4 ranges
+    "10.0.0.0/8",       // Private network class A
+    "172.16.0.0/12",    // Private network class B
+    "192.168.0.0/16",   // Private network class C
+
+    // IPv6 ranges
+    "::1/128",          // Localhost
+    "fc00::/7",         // Unique local addresses
+    "2001:db8::/32"     // Documentation prefix
+  ]
+}));
+```
+
+#### Options:
+
+- `mode`: Operation mode - "whitelist" (allow only listed) or "blacklist" (block listed)
+- `ips`: Array of IP addresses or CIDR ranges (supports IPv4 and IPv6)
+- `message`: Custom denial message - string or function(ip)
+- `statusCode`: HTTP status when denied (default: 403)
+- `skip`: Function to conditionally skip restrictions
+- `logDenied`: Log denied requests (default: false)
+- `logger`: Custom logging function
+- `setHeader`: Add debug header with allow/deny status
+- `headerName`: Custom header name (default: "X-IP-Restriction")
+
+#### Presets:
+
+- `localhostOnly()`: Allow only 127.0.0.1 and ::1
+- `privateNetworkOnly()`: Allow RFC 1918 private networks
+
+#### Features:
+
+- **CIDR Support**: Use ranges like "192.168.1.0/24" or "2001:db8::/32"
+- **IPv4/IPv6**: Full support for both protocols
+- **Dynamic Management**: Add/remove IPs at runtime
+- **Conditional Bypass**: Skip restrictions for certain users/conditions
+- **Debug Headers**: Optional headers for testing restrictions
+- **Custom Messages**: Dynamic error messages based on blocked IP
+
+#### Security Notes:
+
+- Always use with `ipExtract` middleware when behind proxies
+- For direct connections, `ctx.clientIp` is used automatically
+- Test CIDR ranges carefully to avoid blocking legitimate users
+- Consider using whitelist mode for sensitive endpoints
+- Log denied attempts to monitor potential attacks
 
 ## 📦 Dependencies
 
