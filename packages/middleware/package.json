@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
@@ -16,6 +16,10 @@
 		"./bearer-auth": {
 			"types": "./dist/bearer-auth.d.ts",
 			"import": "./dist/bearer-auth.js"
+		},
+		"./body-limit": {
+			"types": "./dist/body-limit.d.ts",
+			"import": "./dist/body-limit.js"
 		},
 		"./cache": {
 			"types": "./dist/cache.d.ts",
@@ -66,6 +70,7 @@
 		"middleware",
 		"basic-auth",
 		"bearer-auth",
+		"body-limit",
 		"cache",
 		"cors",
 		"ip-extract",

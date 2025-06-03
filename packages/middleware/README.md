@@ -81,19 +81,20 @@ console.log("Server running at http://localhost:3000");
 
 ### 🔐 Authentication
 
-- **Bearer Auth** - JWT/API token authentication
-- **Basic Auth** - HTTP Basic authentication
+- [**Bearer Auth**](#bearer-auth) - JWT/API token authentication
+- [**Basic Auth**](#basic-auth) - HTTP Basic authentication
 
 ### 🛡️ Security
 
-- **CORS** - Cross-Origin Resource Sharing
-- **Rate Limiting** - Request rate limiting with multiple algorithms
+- [**CORS**](#cors) - Cross-Origin Resource Sharing
+- [**Rate Limit**](#rate-limit) - Request rate limiting with multiple algorithms
 
 ### 📊 Utils
 
-- **Logger** - HTTP request/response logging with customizable formats
-- **Cache** - Response caching using pluggable backends like in-memory, LRU, or Redis for improved performance and reduced server load.
-- **IP Extract** - Parses the incoming request's IP address, respecting common proxy headers (X-Forwarded-For, X-Real-IP) and attaches it to the request context.
+- [**Logger**](#logger) - HTTP request/response logging with customizable formats
+- [**Body Limit**](#body-limit) - Limit the file size of the request body
+- [**Cache**](#cache) - Response caching using pluggable backends like in-memory, LRU, or Redis for improved performance and reduced server load
+- [**IP Extract**](#ip-extract) - Parses the incoming request's IP address, respecting common proxy headers (X-Forwarded-For, X-Real-IP) and attaches it to the request context
 
 ## 📚 Middleware Documentation
 
@@ -349,6 +350,113 @@ app.use(cache({ storage: new CustomStorage() }));
 - Distributed caching with Redis backend
 - Memory efficient with configurable storage limits
 
+### Body Limit
+
+Protect your server from large request payloads with configurable size limits. Prevents memory exhaustion and ensures fair resource usage.
+
+```js
+import { bodyLimit } from "@rabbit-company/web-middleware/body-limit";
+
+// Basic usage - 1MB limit (default)
+app.use(bodyLimit());
+
+// Custom size limit
+app.use(
+	bodyLimit({
+		maxSize: "5mb", // or 5242880 for bytes
+	})
+);
+
+// Different limits for different routes
+app.post("/api/upload/avatar", bodyLimit({ maxSize: "2mb" }), uploadAvatar);
+
+app.post("/api/upload/video", bodyLimit({ maxSize: "100mb" }), uploadVideo);
+
+// Limit only specific content types
+app.use(
+	bodyLimit({
+		maxSize: "10mb",
+		contentTypes: ["application/json", "application/xml"],
+		message: "JSON/XML payload too large",
+	})
+);
+
+// Skip limit for premium users
+app.use(
+	bodyLimit({
+		maxSize: "5mb",
+		skip: async (ctx) => {
+			const user = ctx.get("user");
+			return user?.plan === "premium";
+		},
+	})
+);
+
+// Custom error handling
+app.use(
+	bodyLimit({
+		maxSize: "1mb",
+		message: (size, limit) => `Payload too large: ${(size / 1024).toFixed(2)}KB exceeds ${(limit / 1024).toFixed(2)}KB limit`,
+		statusCode: 400, // Use 400 instead of default 413
+	})
+);
+
+// Include headers in size calculation
+app.use(
+	bodyLimit({
+		maxSize: "10kb",
+		includeHeaders: true, // Total request size including headers
+	})
+);
+
+// File upload endpoint with strict limit
+app.post(
+	"/api/documents",
+	bodyLimit({
+		maxSize: "10mb",
+		contentTypes: ["multipart/form-data"],
+		message: "Document size must not exceed 10MB",
+	}),
+	async (ctx) => {
+		const formData = await ctx.req.formData();
+		const file = formData.get("document");
+		// Process file...
+		return ctx.json({ success: true });
+	}
+);
+```
+
+#### Options:
+
+- `maxSize`: Maximum allowed body size (number in bytes or string with units: "1kb", "5mb", "1gb")
+- `includeHeaders`: Include header size in limit calculation (default: false)
+- `message`: Error message - string or function(size, limit)
+- `statusCode`: HTTP status code when limit exceeded (default: 413)
+- `contentTypes`: Array of content types to apply limit to (default: all)
+- `skip`: Function to conditionally skip limit check
+
+#### Size Format Examples:
+
+- `100` or `"100"` - 100 bytes
+- `"100b"` - 100 bytes
+- `"10kb"` - 10 kilobytes (10,240 bytes)
+- `"5.5mb"` - 5.5 megabytes
+- `"1gb"` - 1 gigabyte
+
+#### Security Benefits:
+
+- Prevents memory exhaustion attacks
+- Protects against slowloris-style attacks
+- Ensures fair resource allocation
+- Reduces attack surface for buffer overflow exploits
+
+#### Performance Notes:
+
+- Uses Content-Length header for efficient early rejection
+- No body parsing required - fails fast for oversized requests
+- Minimal memory overhead
+- Works with streaming and non-streaming requests
+
 ### Bearer Auth
 
 Token-based authentication for APIs.
@@ -567,7 +675,7 @@ app.use(
 - `preflightContinue`: Pass OPTIONS requests to next handler
 - `optionsSuccessStatus`: Status code for successful OPTIONS
 
-### Rate Limiting
+### Rate Limit
 
 Advanced rate limiting with multiple algorithms to prevent API abuse and ensure fair usage..
 
@@ -723,6 +831,115 @@ console.log(`Active rate limits: ${limiter.getSize()}`);
 - `RateLimit-Reset`: Reset timestamp
 - `RateLimit-Algorithm`: Algorithm used
 - `Retry-After`: Seconds until retry (when limited)
+
+### IP Extract
+
+Securely extract client IP addresses from requests, handling various proxy configurations and preventing IP spoofing attacks.
+
+```js
+import { ipExtract, getClientIp } from "@rabbit-company/web-middleware/ip-extract";
+
+// Direct connection (no proxy)
+app.use(ipExtract("direct"));
+
+// Behind Cloudflare
+app.use(ipExtract("cloudflare"));
+
+// Behind AWS Load Balancer
+app.use(ipExtract("aws"));
+
+// Behind nginx reverse proxy
+app.use(ipExtract("nginx"));
+
+// Custom configuration
+app.use(
+	ipExtract({
+		trustProxy: true,
+		trustedProxies: ["10.0.0.0/8", "172.16.0.0/12"],
+		trustedHeaders: ["x-real-ip", "x-forwarded-for"],
+		maxProxyChain: 3,
+		logWarnings: true,
+	})
+);
+
+// Access the extracted IP
+app.get("/api/info", (ctx) => {
+	const ip = getClientIp(ctx);
+	// or directly: ctx.clientIp
+	return ctx.json({
+		clientIp: ip,
+		country: geoip.lookup(ip)?.country,
+	});
+});
+
+// Rate limiting by IP
+app.use(ipExtract("cloudflare"));
+app.use(
+	rateLimit({
+		keyGenerator: (ctx) => getClientIp(ctx) || "unknown",
+	})
+);
+
+// Logging with real IPs
+app.use(ipExtract("nginx"));
+app.use(
+	logger({
+		getUserId: (ctx) => getClientIp(ctx),
+	})
+);
+
+// IP-based access control
+const ipWhitelist = ["192.168.1.0/24", "10.0.0.0/8"];
+
+app.use("/admin", ipExtract("direct"), (ctx, next) => {
+	const ip = getClientIp(ctx);
+	if (!ip || !isIpInWhitelist(ip, ipWhitelist)) {
+		return ctx.text("Access denied", 403);
+	}
+	return next();
+});
+
+// Development mode (trusts all headers - NOT for production!)
+if (process.env.NODE_ENV === "development") {
+	app.use(ipExtract("development"));
+}
+```
+
+#### Presets:
+
+- `"direct"` - No proxy, direct connections only
+- `"cloudflare"` - Behind Cloudflare (auto-configures CF IPs)
+- `"aws"` - Behind AWS ALB/ELB
+- `"gcp"` - Behind Google Cloud Load Balancer
+- `"azure"` - Behind Azure Application Gateway
+- `"vercel"` - Behind Vercel's edge network
+- `"nginx"` - Behind nginx reverse proxy
+- `"development"` - Trusts all headers (NEVER use in production!)
+
+#### Options:
+
+- `trustProxy`: Enable proxy header parsing (default: false)
+- `trustedProxies`: List of trusted proxy IPs/CIDR ranges
+- `trustedHeaders`: Headers to check in order (default: ["x-forwarded-for", "x-real-ip"])
+- `maxProxyChain`: Maximum proxy chain length to prevent attacks (default: 5)
+- `cloudProvider`: Auto-configure for cloud provider ("aws", "cloudflare", "gcp", "azure", "vercel")
+- `logWarnings`: Log suspicious activity (default: false)
+
+#### Security Features:
+
+- **IP Spoofing Prevention**: Only trusts headers from configured proxies
+- **Chain Length Limits**: Prevents long X-Forwarded-For chains
+- **CIDR Support**: Configure trusted proxy ranges (e.g., "10.0.0.0/8")
+- **Cloud Provider Detection**: Pre-configured secure settings for major providers
+- **IPv4/IPv6 Support**: Full support for both protocols
+
+#### Important Notes:
+
+- Always use HTTPS in production to prevent header injection
+- Configure `trustedProxies` to match your infrastructure
+- The `development` preset is insecure - only for local testing
+- Test your configuration with tools like `curl -H "X-Forwarded-For: fake"`
+- Consider using cloud provider presets for automatic secure configuration
 
 ## 📦 Dependencies
 

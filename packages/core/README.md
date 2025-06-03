@@ -38,16 +38,16 @@ const app = new Web<{ user?: { id: string } }>();
 
 // Middleware
 app.use(async (ctx, next) => {
-  console.log(`${ctx.req.method} ${ctx.req.url}`);
-  await next();
+	console.log(`${ctx.req.method} ${ctx.req.url}`);
+	await next();
 });
 
 // Routes
 app.get('/', (ctx) => ctx.text('Hello!'));
 
 app.get('/users/:id', async (ctx) => {
-  const user = await getUser(ctx.params.id);
-  return ctx.json(user);
+	const user = await getUser(ctx.params.id);
+	return ctx.json(user);
 });
 
 // Start server
@@ -106,7 +106,7 @@ console.log(routes); // [{ id: '...', method: 'GET', path: '/users/:id' }]
 app.clear();
 ```
 
-### 🧩 Middleware
+### 🧩 Middleware ([`@rabbit-company/web-middleware`](https://www.npmjs.com/package/@rabbit-company/web-middleware))
 
 ```js
 // Global middleware (chainable)
@@ -118,17 +118,17 @@ app.use(async (ctx, next) => {
 
 // Path-specific middleware (chainable)
 app.use("/admin", adminAuthMiddleware)
-   .use("POST", "/users", validateUserMiddleware);
+	 .use("POST", "/users", validateUserMiddleware);
 
 // Middleware with removal capability
 const authId = app.addMiddleware('/admin', (ctx, next) => {
-  // Authentication logic
-  await next();
+	// Authentication logic
+	await next();
 });
 
 const loggingId = app.addMiddleware(async (ctx, next) => {
-  console.log(`${ctx.req.method} ${ctx.req.url}`);
-  await next();
+	console.log(`${ctx.req.method} ${ctx.req.url}`);
+	await next();
 });
 
 // Remove middleware

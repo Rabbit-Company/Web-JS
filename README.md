@@ -106,7 +106,7 @@ console.log(routes); // [{ id: '...', method: 'GET', path: '/users/:id' }]
 app.clear();
 ```
 
-### 🧩 Middleware
+### 🧩 Middleware ([`@rabbit-company/web-middleware`](https://www.npmjs.com/package/@rabbit-company/web-middleware))
 
 ```js
 // Global middleware (chainable)

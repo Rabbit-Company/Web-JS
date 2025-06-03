@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-monorepo",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "High-performance web framework monorepo",
 	"private": true,
 	"type": "module",
