@@ -47,6 +47,12 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
 	 * Default: "Invalid or expired token"
 	 */
 	invalidTokenMessage?: string;
+
+	/**
+	 * Whether to skip bearer authentication for specific routes.
+	 * Function receives the context and returns true to skip the authentication.
+	 */
+	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
 }
 
 /**
@@ -90,6 +96,7 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
  */
 export function bearerAuth<T extends Record<string, unknown> = Record<string, unknown>>(options: BearerAuthOptions<T>): Middleware<T> {
 	const {
+		skip,
 		validate,
 		scheme = "Bearer",
 		realm,
@@ -99,6 +106,11 @@ export function bearerAuth<T extends Record<string, unknown> = Record<string, un
 	} = options;
 
 	return async (ctx: Context<T>, next) => {
+		// Check if we should skip this request
+		if (skip && (await skip(ctx))) {
+			return next();
+		}
+
 		const auth = ctx.req.headers.get("Authorization");
 
 		if (!auth || !auth.startsWith("Bearer ")) {

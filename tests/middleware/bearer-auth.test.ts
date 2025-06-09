@@ -277,6 +277,41 @@ describe("Bearer Authentication Middleware", () => {
 		});
 	});
 
+	describe("Skip Functionality", () => {
+		it("should skip authentication based on skip function", async () => {
+			const app = new Web();
+
+			app.use(
+				bearerAuth({
+					validate: () => false,
+					skip: (ctx) => ctx.req.headers.get("X-Skip-Auth") === "true",
+				})
+			);
+			app.get("/", async (ctx) => {
+				return ctx.json({ success: true });
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res1 = await fetch(`http://localhost:${server.port}`);
+				expect(res1.status).toBe(401);
+
+				const res2 = await fetch(`http://localhost:${server.port}`, {
+					headers: {
+						"X-Skip-Auth": "true",
+					},
+				});
+				expect(res2.status).toBe(200);
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
 	describe("JWT Simulation", () => {
 		it("should work with JWT-like tokens", async () => {
 			const app = new Web<{ user: { sub: string; email: string; exp: number } }>();

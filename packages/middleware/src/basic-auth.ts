@@ -27,6 +27,12 @@ export interface BasicAuthOptions<T extends Record<string, unknown>> {
 	 * Default: "user"
 	 */
 	contextKey?: keyof T;
+
+	/**
+	 * Whether to skip basic authentication for specific routes.
+	 * Function receives the context and returns true to skip the authentication.
+	 */
+	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
 }
 
 /**
@@ -39,9 +45,14 @@ export interface BasicAuthOptions<T extends Record<string, unknown>> {
  * @returns {Middleware<T>} - Middleware function for basic authentication.
  */
 export function basicAuth<T extends Record<string, unknown> = Record<string, unknown>>(options: BasicAuthOptions<T>): Middleware<T> {
-	const { validate, realm = "Restricted", contextKey = "user" as keyof T } = options;
+	const { skip, validate, realm = "Restricted", contextKey = "user" as keyof T } = options;
 
 	return async (ctx: Context<T>, next) => {
+		// Check if we should skip this request
+		if (skip && (await skip(ctx))) {
+			return next();
+		}
+
 		const auth = ctx.req.headers.get("Authorization");
 
 		if (!auth || !auth.startsWith("Basic ")) {

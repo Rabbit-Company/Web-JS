@@ -542,6 +542,7 @@ app.get("/api/profile", bearerAuth({ validate }), (ctx) => {
 - `contextKey`: Where to store user data in context (default: "user")
 - `missingTokenMessage`: Error when token is missing
 - `invalidTokenMessage`: Error when token is invalid
+- `skip`: Function to conditionally skip authentication
 
 ### Basic Auth
 
@@ -629,6 +630,7 @@ app.use("/admin", adminAuth, async (ctx, next) => {
 - `validate`: Function to verify credentials (required)
 - `realm`: Authentication realm shown in browser popup (default: "Restricted")
 - `contextKey`: Where to store user data in context (default: "user")
+- `skip`: Function to conditionally skip authentication
 
 #### Security Notes:
 
