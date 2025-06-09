@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Web } from "../../packages/core/src";
 import { rateLimit, createRateLimiter, createKeyGenerator, Algorithm } from "../../packages/middleware/src/rate-limit";
+import { ipExtract } from "../../packages/middleware/src/ip-extract";
 
 describe("Rate Limit Middleware", () => {
 	let app: Web;
@@ -13,9 +14,7 @@ describe("Rate Limit Middleware", () => {
 		app.use(rateLimit({ max: 3, windowMs: 1000 }));
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		// First 3 requests should succeed
 		for (let i = 0; i < 3; i++) {
@@ -30,9 +29,7 @@ describe("Rate Limit Middleware", () => {
 		app.use(rateLimit({ max: 2, windowMs: 1000 }));
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		// First 2 requests succeed
 		await app.handle(req);
@@ -76,9 +73,7 @@ describe("Rate Limit Middleware", () => {
 		app.use(rateLimit({ max: 1, windowMs: 100 })); // 100ms window
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		// First request succeeds
 		const res1 = await app.handle(req);
@@ -97,6 +92,7 @@ describe("Rate Limit Middleware", () => {
 	});
 
 	it("should track different IPs separately", async () => {
+		app.use(ipExtract("nginx"));
 		app.use(rateLimit({ max: 1 }));
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -209,30 +205,6 @@ describe("Rate Limit Middleware", () => {
 		expect(res.headers.get("RateLimit-Reset")).toBeNull();
 	});
 
-	it("should handle X-Real-IP header fallback", async () => {
-		app.use(rateLimit({ max: 1 }));
-		app.get("/", (ctx) => ctx.text("OK"));
-
-		const req = new Request("http://localhost/", {
-			headers: { "X-Real-IP": "10.0.0.1" },
-		});
-
-		expect((await app.handle(req)).status).toBe(200);
-		expect((await app.handle(req)).status).toBe(429);
-	});
-
-	it("should handle CF-Connecting-IP header", async () => {
-		app.use(rateLimit({ max: 1 }));
-		app.get("/", (ctx) => ctx.text("OK"));
-
-		const req = new Request("http://localhost/", {
-			headers: { "CF-Connecting-IP": "172.16.0.1" },
-		});
-
-		expect((await app.handle(req)).status).toBe(200);
-		expect((await app.handle(req)).status).toBe(429);
-	});
-
 	it("should use custom endpoint generator", async () => {
 		app.use(
 			rateLimit({
@@ -243,12 +215,8 @@ describe("Rate Limit Middleware", () => {
 		app.get("/api/users", (ctx) => ctx.text("Users"));
 		app.get("/api/posts", (ctx) => ctx.text("Posts"));
 
-		const req1 = new Request("http://localhost/api/users", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
-		const req2 = new Request("http://localhost/api/posts", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req1 = new Request("http://localhost/api/users");
+		const req2 = new Request("http://localhost/api/posts");
 
 		// Both requests count towards global limit
 		expect((await app.handle(req1)).status).toBe(200);
@@ -267,9 +235,7 @@ describe("Rate Limit Middleware", () => {
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		// Make 3 requests
 		for (let i = 0; i < 3; i++) {
@@ -303,9 +269,7 @@ describe("Rate Limit Middleware", () => {
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		// Use all tokens
 		for (let i = 0; i < 3; i++) {
@@ -336,12 +300,8 @@ describe("Rate Limit Middleware", () => {
 		app.get("/api/users", (ctx) => ctx.text("Users"));
 		app.get("/api/posts", (ctx) => ctx.text("Posts"));
 
-		const userReq = new Request("http://localhost/api/users", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
-		const postReq = new Request("http://localhost/api/posts", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const userReq = new Request("http://localhost/api/users");
+		const postReq = new Request("http://localhost/api/posts");
 
 		// Both endpoints share the same rate limit
 		expect((await app.handle(userReq)).status).toBe(200);
@@ -354,7 +314,6 @@ describe("Rate Limit Middleware", () => {
 			rateLimit({
 				max: 1,
 				keyGenerator: createKeyGenerator({
-					useIp: true,
 					custom: (ctx) => ctx.req.headers.get("API-Key"),
 				}),
 			})
@@ -363,14 +322,12 @@ describe("Rate Limit Middleware", () => {
 
 		const req1 = new Request("http://localhost/", {
 			headers: {
-				"X-Forwarded-For": "192.168.1.1",
 				"API-Key": "key-123",
 			},
 		});
 
 		const req2 = new Request("http://localhost/", {
 			headers: {
-				"X-Forwarded-For": "192.168.1.1",
 				"API-Key": "key-456",
 			},
 		});
@@ -398,19 +355,6 @@ describe("Rate Limit Middleware", () => {
 		expect(res.headers.get("RateLimit-Algorithm")).toBe(Algorithm.TOKEN_BUCKET);
 	});
 
-	it("should handle multiple X-Forwarded-For IPs", async () => {
-		app.use(rateLimit({ max: 1 }));
-		app.get("/", (ctx) => ctx.text("OK"));
-
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "203.0.113.195, 70.41.3.18, 150.172.238.178" },
-		});
-
-		// Should use first IP
-		expect((await app.handle(req)).status).toBe(200);
-		expect((await app.handle(req)).status).toBe(429);
-	});
-
 	it("should disable automatic cleanup", async () => {
 		const limiter = createRateLimiter({
 			max: 1,
@@ -421,9 +365,7 @@ describe("Rate Limit Middleware", () => {
 		app.use(rateLimit({ rateLimiter: limiter }));
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/", {
-			headers: { "X-Forwarded-For": "192.168.1.1" },
-		});
+		const req = new Request("http://localhost/");
 
 		expect((await app.handle(req)).status).toBe(200);
 		expect((await app.handle(req)).status).toBe(429);

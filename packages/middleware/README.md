@@ -760,9 +760,6 @@ app.use(
 import { createKeyGenerator } from "@rabbit-company/web-middleware";
 
 const keyGen = createKeyGenerator({
-	useIp: true, // Include IP address
-	useUserId: true, // Include user ID if authenticated
-	useSessionId: false, // Don't use session
 	custom: (ctx) => {
 		// Add custom identifier
 		const apiKey = ctx.req.headers.get("x-api-key");

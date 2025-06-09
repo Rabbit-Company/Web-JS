@@ -10,7 +10,7 @@
         "@rabbit-company/logger": "^5.5.0",
         "@types/bun": "latest",
         "bun-plugin-dts": "^0.3.0",
-        "elysia": "^1.3.3",
+        "elysia": "^1.3.4",
         "hono": "^4.7.11",
       },
       "peerDependencies": {
@@ -19,7 +19,7 @@
     },
     "packages/core": {
       "name": "@rabbit-company/web",
-      "version": "0.5.0",
+      "version": "0.10.0",
       "devDependencies": {
         "@types/bun": "latest",
       },
@@ -29,7 +29,7 @@
     },
     "packages/middleware": {
       "name": "@rabbit-company/web-middleware",
-      "version": "0.5.0",
+      "version": "0.10.0",
       "dependencies": {
         "@rabbit-company/logger": "^5.5.0",
         "@rabbit-company/rate-limiter": "^3.0.0",
@@ -38,7 +38,7 @@
         "@types/bun": "latest",
       },
       "peerDependencies": {
-        "@rabbit-company/web": "^0.4.0",
+        "@rabbit-company/web": "^0.5.0",
         "typescript": "^5",
       },
     },
@@ -84,7 +84,7 @@
 
     "dts-bundle-generator": ["dts-bundle-generator@9.5.1", "", { "dependencies": { "typescript": ">=5.0.2", "yargs": "^17.6.0" }, "bin": { "dts-bundle-generator": "dist/bin/dts-bundle-generator.js" } }, "sha512-DxpJOb2FNnEyOzMkG11sxO2dmxPjthoVWxfKqWYJ/bI/rT1rvTMktF5EKjAYrRZu6Z6t3NhOUZ0sZ5ZXevOfbA=="],
 
-    "elysia": ["elysia@1.3.3", "", { "dependencies": { "cookie": "^1.0.2", "exact-mirror": "0.1.2", "fast-decode-uri-component": "^1.0.1" }, "optionalDependencies": { "@sinclair/typebox": "^0.34.33", "openapi-types": "^12.1.3" }, "peerDependencies": { "file-type": ">= 20.0.0", "typescript": ">= 5.0.0" } }, "sha512-x6a89d4h0xX9TB0CSGkUuKNqIK776HBJw0WHtK1B3ViQqZijsLnOor6be/7TwVl8MG6m59NHGHbmbBS6lnCXSw=="],
+    "elysia": ["elysia@1.3.4", "", { "dependencies": { "cookie": "^1.0.2", "exact-mirror": "0.1.2", "fast-decode-uri-component": "^1.0.1" }, "optionalDependencies": { "@sinclair/typebox": "^0.34.33", "openapi-types": "^12.1.3" }, "peerDependencies": { "file-type": ">= 20.0.0", "typescript": ">= 5.0.0" } }, "sha512-kAfM3Zwovy3z255IZgTKVxBw91HbgKhYl3TqrGRdZqqr+Fd+4eKOfvxgaKij22+MZLczPzIHtscAmvfpI3+q/A=="],
 
     "emoji-regex": ["emoji-regex@8.0.0", "", {}, "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A=="],
 

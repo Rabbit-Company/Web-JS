@@ -396,14 +396,6 @@ function getPresetConfiguration<T extends Record<string, unknown>>(preset?: stri
 				includeRemoteAddress: false,
 				logRequestBody: false,
 				logResponseBody: false,
-				formatRequestMessage: (ctx) => {
-					const url = new URL(ctx.req.url);
-					return `${ctx.req.method} ${url.pathname}${url.search}`;
-				},
-				formatResponseMessage: (ctx, requestId, duration, statusCode) => {
-					const url = new URL(ctx.req.url);
-					return `${ctx.req.method} ${url.pathname}${url.search} ${statusCode} ${duration}ms`;
-				},
 			};
 
 		case "standard":
@@ -470,7 +462,7 @@ function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<st
  */
 function defaultRequestFormatter<T extends Record<string, unknown> = Record<string, unknown>>(ctx: Context<T>, requestId: string): string {
 	const url = new URL(ctx.req.url);
-	return `${ctx.req.method} ${url.pathname}${url.search}`;
+	return `${ctx.req.method} - ${ctx.clientIp} - ${url.pathname}${url.search}`;
 }
 
 /**
@@ -483,7 +475,7 @@ function defaultResponseFormatter<T extends Record<string, unknown> = Record<str
 	statusCode: number
 ): string {
 	const url = new URL(ctx.req.url);
-	return `${ctx.req.method} ${url.pathname}${url.search} ${statusCode} ${duration}ms`;
+	return `${ctx.req.method} - ${ctx.clientIp} - ${url.pathname}${url.search} - ${statusCode} - ${duration}ms`;
 }
 
 /**
@@ -546,7 +538,7 @@ async function buildRequestMetadata<T extends Record<string, unknown>>(
 
 		// Add remote address if enabled
 		if (options.includeRemoteAddress) {
-			requestData.remoteAddress = getClientIP(ctx);
+			requestData.remoteAddress = ctx.clientIp;
 		}
 
 		// Add request body if enabled
@@ -609,27 +601,6 @@ function getMetadata<T extends Record<string, unknown>>(
 	if (!metadata) return {};
 	if (typeof metadata === "function") return metadata(ctx);
 	return metadata;
-}
-
-/**
- * Extract client IP address from request.
- */
-function getClientIP<T extends Record<string, unknown>>(ctx: Context<T>): string | undefined {
-	// Check forwarded headers
-	const forwarded = ctx.req.headers.get("x-forwarded-for");
-	if (forwarded) {
-		return forwarded.split(",")[0].trim();
-	}
-
-	const realIp = ctx.req.headers.get("x-real-ip");
-	if (realIp) return realIp;
-
-	const cfIp = ctx.req.headers.get("cf-connecting-ip");
-	if (cfIp) return cfIp;
-
-	// Try to get from request object (may not be available in all environments)
-	const request = ctx.req as any;
-	return request.connection?.remoteAddress || request.socket?.remoteAddress || request.info?.remoteAddress;
 }
 
 /**

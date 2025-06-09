@@ -3,130 +3,306 @@ import { RateLimiter, Algorithm } from "@rabbit-company/rate-limiter";
 import type { RateLimitConfig, RateLimitResult } from "@rabbit-company/rate-limiter";
 
 /**
- * Rate limiting options for middleware.
+ * Configuration options for rate limiting middleware.
+ *
+ * @interface RateLimitOptions
+ * @template T - Context state type
+ *
+ * @example
+ * ```typescript
+ * const options: RateLimitOptions = {
+ *   algorithm: Algorithm.SLIDING_WINDOW,
+ *   windowMs: 60000,
+ *   max: 100,
+ *   headers: true
+ * };
+ * ```
  */
 export interface RateLimitOptions<T extends Record<string, unknown>> {
 	/**
-	 * Rate limiting algorithm to use (Fixed Window, Sliding Window, Token Bucket).
+	 * Rate limiting algorithm to use.
+	 *
+	 * @default Algorithm.FIXED_WINDOW
+	 *
+	 * Available algorithms:
+	 * - `FIXED_WINDOW`: Resets request count at fixed intervals
+	 * - `SLIDING_WINDOW`: Smoothly adjusts request count over time
+	 * - `TOKEN_BUCKET`: Allows bursts while maintaining average rate
 	 */
 	algorithm?: Algorithm;
 	/**
-	 * Time window in milliseconds for fixed or sliding window algorithms.
+	 * Time window duration in milliseconds for fixed or sliding window algorithms.
+	 * Defines how long the rate limit window lasts.
+	 *
+	 * @default 60000 (1 minute)
+	 *
+	 * @example
+	 * ```typescript
+	 * windowMs: 15 * 60 * 1000 // 15 minutes
+	 * ```
 	 */
 	windowMs?: number;
 	/**
-	 * Maximum number of requests allowed per window or token bucket capacity.
+	 * Maximum number of requests allowed within the time window (for fixed/sliding window)
+	 * or token bucket capacity (for token bucket algorithm).
+	 *
+	 * @default 60
 	 */
 	max?: number;
 
 	/**
-	 * Refill rate for token bucket algorithm (tokens per interval).
+	 * Token refill rate for token bucket algorithm.
+	 * Specifies how many tokens are added per refill interval.
+	 *
+	 * @default 1
+	 * @remarks Only applicable when using TOKEN_BUCKET algorithm
 	 */
 	refillRate?: number;
 	/**
-	 * Interval in milliseconds at which tokens are refilled in token bucket.
+	 * Interval in milliseconds at which tokens are refilled in token bucket algorithm.
+	 *
+	 * @default 1000 (1 second)
+	 * @remarks Only applicable when using TOKEN_BUCKET algorithm
 	 */
 	refillInterval?: number;
 
 	/**
-	 * Precision in milliseconds for sliding window algorithm.
+	 * Time precision in milliseconds for sliding window algorithm.
+	 * Lower values provide more accurate rate limiting but use more memory.
+	 *
+	 * @default 100
+	 * @remarks Only applicable when using SLIDING_WINDOW algorithm
 	 */
 	precision?: number;
 
 	/**
-	 * Message to return when rate limited.
+	 * Custom error message returned when rate limit is exceeded.
+	 *
+	 * @default "Too many requests"
+	 *
+	 * @example
+	 * ```typescript
+	 * message: "Rate limit exceeded. Please try again later."
+	 * ```
 	 */
 	message?: string;
 	/**
-	 * HTTP status code to return when rate limited.
+	 * HTTP status code returned when rate limit is exceeded.
+	 *
+	 * @default 429 (Too Many Requests)
 	 */
 	statusCode?: number;
 	/**
-	 * Whether to include rate limit headers in the response.
+	 * Whether to include rate limit information in response headers.
+	 *
+	 * Headers included:
+	 * - `RateLimit-Limit`: Request limit
+	 * - `RateLimit-Remaining`: Remaining requests
+	 * - `RateLimit-Reset`: Reset timestamp (seconds)
+	 * - `RateLimit-Algorithm`: Algorithm used
+	 * - `Retry-After`: Seconds until retry (when limited)
+	 *
+	 * @default true
 	 */
 	headers?: boolean;
 
 	/**
-	 * Function to generate a unique key (e.g., per IP or user).
+	 * Function to generate a unique identifier for rate limiting.
+	 * Determines what gets rate limited (e.g., IP, user, API key).
+	 *
+	 * @param ctx - Request context
+	 * @returns Unique identifier string
+	 *
+	 * @default Uses client IP address
+	 *
+	 * @example
+	 * ```typescript
+	 * keyGenerator: (ctx) => {
+	 *   // Rate limit by user ID if authenticated, otherwise by IP
+	 *   return ctx.get('userId') || ctx.clientIp || 'anonymous';
+	 * }
+	 * ```
 	 */
 	keyGenerator?: (ctx: Context<T>) => string;
 	/**
-	 * Function to generate a rate-limited endpoint identifier.
+	 * Function to generate endpoint identifier for rate limiting.
+	 * Allows different rate limits for different endpoints.
+	 *
+	 * @param ctx - Request context
+	 * @returns Endpoint identifier string
+	 *
+	 * @default Combines HTTP method and pathname
+	 *
+	 * @example
+	 * ```typescript
+	 * endpointGenerator: (ctx) => {
+	 *   // Group all GET requests together
+	 *   return ctx.req.method === 'GET' ? 'GET:*' : `${ctx.req.method}:${ctx.req.url}`;
+	 * }
+	 * ```
 	 */
 	endpointGenerator?: (ctx: Context<T>) => string;
 	/**
-	 * Function to skip rate limiting conditionally.
+	 * Function to conditionally skip rate limiting for certain requests.
+	 * Useful for whitelisting certain IPs, authenticated users, or endpoints.
+	 *
+	 * @param ctx - Request context
+	 * @returns Promise<boolean> or boolean - true to skip rate limiting
+	 *
+	 * @example
+	 * ```typescript
+	 * skip: (ctx) => {
+	 *   const user = ctx.get('user');
+	 *   return user?.role === 'admin' || ctx.clientIp === '127.0.0.1';
+	 * }
+	 * ```
 	 */
+
 	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
 
 	/**
-	 * How often expired records should be cleaned up.
+	 * Interval in milliseconds for cleaning up expired rate limit records.
+	 * Lower values free memory faster but use more CPU.
+	 *
+	 * @default 30000 (30 seconds)
 	 */
 	cleanupInterval?: number;
 	/**
-	 * Whether to enable automatic cleanup of expired rate limits.
+	 * Whether to automatically clean up expired rate limit records.
+	 * Disable if managing cleanup externally.
+	 *
+	 * @default true
 	 */
 	enableCleanup?: boolean;
 
 	/**
-	 * Provide an external/shared rate limiter instance.
+	 * External rate limiter instance to use instead of creating a new one.
+	 * Useful for sharing rate limits across multiple middlewares or routes.
+	 *
+	 * @example
+	 * ```typescript
+	 * const sharedLimiter = createRateLimiter({ max: 100 });
+	 * app.use('/api', rateLimit({ rateLimiter: sharedLimiter }));
+	 * app.use('/auth', rateLimit({ rateLimiter: sharedLimiter }));
+	 * ```
 	 */
 	rateLimiter?: RateLimiter;
 }
 
 /**
- * Creates a rate limiting middleware using @rabbit-company/rate-limiter
+ * Creates a rate limiting middleware for web applications.
+ *
+ * This middleware uses the @rabbit-company/rate-limiter library to implement
+ * various rate limiting algorithms including fixed window, sliding window,
+ * and token bucket.
+ *
+ * @template T - Type of the context state object
+ * @param options - Rate limiting configuration options
+ * @returns Middleware function for rate limiting
  *
  * @example
+ * Basic usage with defaults (60 requests per minute):
  * ```typescript
- * // Basic usage with default settings
  * app.use(rateLimit());
+ * ```
  *
- * // Custom configuration with fixed window
+ * @example
+ * Custom configuration with fixed window:
+ * ```typescript
  * app.use(rateLimit({
  *   windowMs: 15 * 60 * 1000, // 15 minutes
- *   max: 100, // limit each IP to 100 requests per windowMs
- *   message: "Too many requests from this IP"
+ *   max: 100, // 100 requests per 15 minutes
+ *   message: "Too many requests from this IP",
+ *   headers: true
  * }));
+ * ```
  *
- * // Using sliding window algorithm
+ * @example
+ * Sliding window for smoother rate limiting:
+ * ```typescript
  * app.use(rateLimit({
  *   algorithm: Algorithm.SLIDING_WINDOW,
  *   windowMs: 60 * 1000, // 1 minute
  *   max: 60, // 60 requests per minute
  *   precision: 100 // 100ms precision
  * }));
+ * ```
  *
- * // Using token bucket for burst handling
+ * @example
+ * Token bucket for handling bursts:
+ * ```typescript
  * app.use(rateLimit({
  *   algorithm: Algorithm.TOKEN_BUCKET,
- *   max: 10, // bucket capacity
- *   refillRate: 2, // 2 tokens per interval
+ *   max: 10, // bucket capacity of 10 tokens
+ *   refillRate: 2, // add 2 tokens per interval
  *   refillInterval: 1000 // refill every second
  * }));
+ * ```
  *
- * // Route-specific rate limiting
+ * @example
+ * Route-specific rate limiting:
+ * ```typescript
+ * // Strict limit for login endpoint
  * app.post('/api/login', rateLimit({
  *   windowMs: 15 * 60 * 1000, // 15 minutes
- *   max: 5, // limit each IP to 5 requests per windowMs
- *   message: "Too many login attempts"
+ *   max: 5, // only 5 login attempts per 15 minutes
+ *   message: "Too many login attempts. Please try again later."
  * }));
  *
- * // Custom key generation (e.g., by user ID instead of IP)
+ * // More relaxed limit for API endpoints
  * app.use('/api', rateLimit({
- *   keyGenerator: (ctx) => ctx.get('userId') || 'anonymous',
- *   endpointGenerator: (ctx) => ctx.req.method + ':' + ctx.req.url
+ *   windowMs: 60 * 1000,
+ *   max: 100
  * }));
+ * ```
  *
- * // Skip rate limiting for certain requests
- * app.use(rateLimit({
- *   skip: async (ctx) => {
- *     // Skip rate limiting for authenticated admins
- *     const user = ctx.get('user');
- *     return user?.role === 'admin';
+ * @example
+ * Advanced key generation:
+ * ```typescript
+ * app.use('/api', rateLimit({
+ *   keyGenerator: (ctx) => {
+ *     // Rate limit by API key if present, user ID if authenticated, otherwise by IP
+ *     const apiKey = ctx.req.headers.get('X-API-Key');
+ *     if (apiKey) return `api:${apiKey}`;
+ *
+ *     const userId = ctx.get('userId');
+ *     if (userId) return `user:${userId}`;
+ *
+ *     return ctx.clientIp || 'anonymous';
+ *   },
+ *   endpointGenerator: (ctx) => {
+ *     // Group endpoints by resource
+ *     const url = new URL(ctx.req.url);
+ *     const resource = url.pathname.split('/')[2]; // e.g., /api/users -> users
+ *     return `${ctx.req.method}:${resource || 'root'}`;
  *   }
  * }));
  * ```
+ *
+ * @example
+ * Conditional rate limiting:
+ * ```typescript
+ * app.use(rateLimit({
+ *   skip: async (ctx) => {
+ *     // Skip rate limiting for:
+ *     // 1. Authenticated admins
+ *     const user = ctx.get('user');
+ *     if (user?.role === 'admin') return true;
+ *
+ *     // 2. Whitelisted IPs
+ *     const whitelist = ['192.168.1.1', '10.0.0.1'];
+ *     if (whitelist.includes(ctx.clientIp)) return true;
+ *
+ *     // 3. Health check endpoints
+ *     if (ctx.req.url.includes('/health')) return true;
+ *
+ *     return false;
+ *   }
+ * }));
+ * ```
+ *
+ * @see {@link createRateLimiter} for creating shared rate limiter instances
+ * @see {@link createKeyGenerator} for advanced key generation utilities
  */
 export function rateLimit<T extends Record<string, unknown> = Record<string, unknown>>(options: RateLimitOptions<T> = {}): Middleware<T> {
 	const {
@@ -223,42 +399,33 @@ export function rateLimit<T extends Record<string, unknown> = Record<string, unk
 }
 
 /**
- * Default key generator that extracts client identifier from request.
- * Prioritizes: X-Forwarded-For > X-Real-IP > CF-Connecting-IP > Remote Address > "unknown".
+ * Default key generator that extracts client IP address for rate limiting.
  *
+ * @template T - Context state type
  * @param ctx - The request context
- * @returns A string identifying the requester
+ * @returns Client IP address or "unknown" if not available
+ *
+ * @internal
  */
 function defaultKeyGenerator<T extends Record<string, unknown>>(ctx: Context<T>): string {
-	// Check for forwarded IPs (common in proxied environments)
-	const forwarded = ctx.req.headers.get("X-Forwarded-For");
-	if (forwarded) {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		return forwarded.split(",")[0].trim();
-	}
-
-	// Check other common headers
-	const realIp = ctx.req.headers.get("X-Real-IP");
-	if (realIp) return realIp;
-
-	// Cloudflare specific header
-	const cfIp = ctx.req.headers.get("CF-Connecting-IP");
-	if (cfIp) return cfIp;
-
-	// Try to get remote address from the request
-	// Note: This might need adjustment based on your server setup
-	const remoteAddr = (ctx.req as any).connection?.remoteAddress || (ctx.req as any).socket?.remoteAddress || (ctx.req as any).info?.remoteAddress;
-	if (remoteAddr) return remoteAddr;
-
-	// Fallback
-	return "unknown";
+	return ctx.clientIp || "unknown";
 }
 
 /**
- * Default endpoint generator that combines HTTP method and pathname.
+ * Default endpoint generator that creates a unique identifier by combining
+ * HTTP method and URL pathname.
  *
+ * @template T - Context state type
  * @param ctx - The request context
- * @returns A unique identifier for the endpoint
+ * @returns Endpoint identifier in format "METHOD:pathname"
+ *
+ * @example
+ * ```typescript
+ * // GET /api/users -> "GET:/api/users"
+ * // POST /api/users/123 -> "POST:/api/users/123"
+ * ```
+ *
+ * @internal
  */
 function defaultEndpointGenerator<T extends Record<string, unknown>>(ctx: Context<T>): string {
 	try {
@@ -271,76 +438,192 @@ function defaultEndpointGenerator<T extends Record<string, unknown>>(ctx: Contex
 }
 
 /**
- * Creates a shared rate limiter instance that can be used across multiple middleware
- * Useful for implementing global rate limits or sharing limits between routes
+ * Creates a shared rate limiter instance that can be used across multiple
+ * middleware instances or routes. This is useful for implementing global
+ * rate limits or sharing limits between related endpoints.
+ *
+ * @param config - Rate limiter configuration
+ * @returns Configured RateLimiter instance
  *
  * @example
+ * Basic shared limiter:
  * ```typescript
- * // Create a shared limiter for API endpoints
  * const apiLimiter = createRateLimiter({
  *   algorithm: Algorithm.SLIDING_WINDOW,
  *   windowMs: 60 * 1000,
  *   max: 100
  * });
  *
- * // Use the same limiter for multiple routes
+ * // Apply same limits to multiple routes
  * app.use('/api/users', rateLimit({ rateLimiter: apiLimiter }));
  * app.use('/api/posts', rateLimit({ rateLimiter: apiLimiter }));
- *
- * // Get limiter statistics
- * console.log(`Active limits: ${apiLimiter.getSize()}`);
+ * app.use('/api/comments', rateLimit({ rateLimiter: apiLimiter }));
  * ```
+ *
+ * @example
+ * Multiple shared limiters for different tiers:
+ * ```typescript
+ * // Strict limiter for authentication endpoints
+ * const authLimiter = createRateLimiter({
+ *   algorithm: Algorithm.FIXED_WINDOW,
+ *   windowMs: 15 * 60 * 1000, // 15 minutes
+ *   max: 5 // 5 attempts per 15 minutes
+ * });
+ *
+ * // Standard limiter for API endpoints
+ * const apiLimiter = createRateLimiter({
+ *   algorithm: Algorithm.SLIDING_WINDOW,
+ *   windowMs: 60 * 1000, // 1 minute
+ *   max: 60 // 60 requests per minute
+ * });
+ *
+ * // Relaxed limiter for static assets
+ * const assetLimiter = createRateLimiter({
+ *   algorithm: Algorithm.TOKEN_BUCKET,
+ *   max: 100, // bucket capacity
+ *   refillRate: 10, // 10 tokens per second
+ *   refillInterval: 1000
+ * });
+ *
+ * app.post('/auth/login', rateLimit({ rateLimiter: authLimiter }));
+ * app.use('/api', rateLimit({ rateLimiter: apiLimiter }));
+ * app.use('/assets', rateLimit({ rateLimiter: assetLimiter }));
+ * ```
+ *
+ * @example
+ * Monitoring limiter statistics:
+ * ```typescript
+ * const limiter = createRateLimiter({ max: 100 });
+ *
+ * // Periodically log statistics
+ * setInterval(() => {
+ *   console.log(`Active rate limits: ${limiter.getSize()}`);
+ *   // Additional monitoring logic
+ * }, 60000);
+ * ```
+ *
+ * @see {@link RateLimiter} for available methods and properties
  */
 export function createRateLimiter(config?: Partial<RateLimitConfig>): RateLimiter {
 	return new RateLimiter(config);
 }
 
 /**
- * Utility function to create a key generator based on multiple factors
+ * Configuration options for the key generator utility.
+ *
+ * @interface KeyGeneratorOptions
+ * @template T - Context state type
+ */
+interface KeyGeneratorOptions<T extends Record<string, unknown>> {
+	/**
+	 * Custom function to generate the rate limit key.
+	 * If not provided, defaults to using the client IP address.
+	 *
+	 * @param ctx - Request context
+	 * @returns Rate limit key or null/undefined (will fallback to "unknown")
+	 */
+	custom?: (ctx: Context<T>) => string | null;
+}
+
+/**
+ * Creates a custom key generator function for flexible rate limiting strategies.
+ * By default, uses the client IP address. Provide a custom function to use any request attribute.
+ *
+ * @template T - Context state type
+ * @param options - Key generator configuration
+ * @returns Function that generates keys for rate limiting
  *
  * @example
+ * Default behavior (IP-based):
  * ```typescript
- * const keyGen = createKeyGenerator({
- *   useIp: true,
- *   useUserId: true,
- *   useSessionId: false,
- *   custom: (ctx) => ctx.req.headers.get('API-Key')
- * });
+ * const keyGen = createKeyGenerator({});
+ * // Uses client IP address
+ * ```
  *
- * app.use(rateLimit({ keyGenerator: keyGen }));
+ * @example
+ * User-based rate limiting:
+ * ```typescript
+ * const userKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const userId = ctx.get('userId');
+ *     return userId ? `user:${userId}` : ctx.clientIp;
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * API key based rate limiting:
+ * ```typescript
+ * const apiKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const apiKey = ctx.req.headers.get('X-API-Key');
+ *     return apiKey ? `api:${apiKey}` : null;
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * Combined IP + User rate limiting:
+ * ```typescript
+ * const comboKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const userId = ctx.get('userId');
+ *     const ip = ctx.clientIp || 'unknown-ip';
+ *     return userId ? `${ip}:user:${userId}` : ip;
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * Session-based rate limiting:
+ * ```typescript
+ * const sessionKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const sessionId = ctx.get('sessionId') || ctx.req.headers.get('X-Session-ID');
+ *     return sessionId ? `session:${sessionId}` : ctx.clientIp;
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * Tiered rate limiting by subscription:
+ * ```typescript
+ * const tieredKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const user = ctx.get('user');
+ *     if (!user) return ctx.clientIp || 'anonymous';
+ *
+ *     // Create different rate limit buckets per tier
+ *     const tier = user.subscription || 'basic';
+ *     return `tier:${tier}:user:${user.id}`;
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * Geographic rate limiting:
+ * ```typescript
+ * const geoKeyGen = createKeyGenerator({
+ *   custom: (ctx) => {
+ *     const country = ctx.get('geoCountry');
+ *     const region = ctx.get('geoRegion');
+ *
+ *     if (country && region) {
+ *       return `geo:${country}:${region}`;
+ *     } else if (country) {
+ *       return `geo:${country}`;
+ *     }
+ *     return ctx.clientIp;
+ *   }
+ * });
  * ```
  */
-export function createKeyGenerator<T extends Record<string, unknown>>(options: {
-	useIp?: boolean;
-	useUserId?: boolean;
-	useSessionId?: boolean;
-	custom?: (ctx: Context<T>) => string | null;
-}): (ctx: Context<T>) => string {
-	const { useIp = true, useUserId = false, useSessionId = false, custom } = options;
+export function createKeyGenerator<T extends Record<string, unknown>>(options: KeyGeneratorOptions<T>): (ctx: Context<T>) => string {
+	const { custom } = options;
 
 	return (ctx: Context<T>): string => {
-		const parts: string[] = [];
-
-		if (useIp) {
-			parts.push(defaultKeyGenerator(ctx));
-		}
-
-		if (useUserId) {
-			const userId = ctx.get("userId" as keyof T);
-			if (userId) parts.push(`user:${userId}`);
-		}
-
-		if (useSessionId) {
-			const sessionId = ctx.get("sessionId" as keyof T) || ctx.req.headers.get("X-Session-ID");
-			if (sessionId) parts.push(`session:${sessionId}`);
-		}
-
-		if (custom) {
-			const customKey = custom(ctx);
-			if (customKey) parts.push(customKey);
-		}
-
-		return parts.length > 0 ? parts.join(":") : "unknown";
+		if (custom) return custom(ctx) || "unknown";
+		return ctx.clientIp || "unknown";
 	};
 }
 
