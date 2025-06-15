@@ -5,7 +5,7 @@ import type { Context, Middleware } from "@rabbit-company/web";
  *
  * @template T - The shape of the context object.
  */
-export interface BearerAuthOptions<T extends Record<string, unknown>> {
+export interface BearerAuthOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Function to validate the bearer token.
 	 *
@@ -16,7 +16,7 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
 	 *          - `true`: Token is valid (sets empty user object)
 	 *          - User object: Token is valid and user data is provided
 	 */
-	validate: (token: string, ctx: Context<T>) => boolean | Record<string, unknown> | Promise<boolean | Record<string, unknown>>;
+	validate: (token: string, ctx: Context<T, B>) => boolean | Record<string, unknown> | Promise<boolean | Record<string, unknown>>;
 
 	/**
 	 * The authentication scheme presented in WWW-Authenticate header.
@@ -52,7 +52,7 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
 	 * Whether to skip bearer authentication for specific routes.
 	 * Function receives the context and returns true to skip the authentication.
 	 */
-	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 }
 
 /**
@@ -61,8 +61,8 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
  * Validates bearer tokens and adds user information to the context on successful authentication.
  *
  * @template T - The context's data type.
- * @param {BearerAuthOptions<T>} options - Configuration options including validation function.
- * @returns {Middleware<T>} - Middleware function for bearer token authentication.
+ * @param {BearerAuthOptions<T, B>} options - Configuration options including validation function.
+ * @returns {Middleware<T, B>} - Middleware function for bearer token authentication.
  *
  * @example
  * ```typescript
@@ -94,7 +94,9 @@ export interface BearerAuthOptions<T extends Record<string, unknown>> {
  * }));
  * ```
  */
-export function bearerAuth<T extends Record<string, unknown> = Record<string, unknown>>(options: BearerAuthOptions<T>): Middleware<T> {
+export function bearerAuth<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: BearerAuthOptions<T, B>
+): Middleware<T, B> {
 	const {
 		skip,
 		validate,
@@ -105,7 +107,7 @@ export function bearerAuth<T extends Record<string, unknown> = Record<string, un
 		invalidTokenMessage = "Invalid or expired token",
 	} = options;
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if we should skip this request
 		if (skip && (await skip(ctx))) {
 			return next();

@@ -3,7 +3,7 @@ import type { Context, Middleware } from "@rabbit-company/web";
 /**
  * Options to configure the body limit middleware behavior.
  */
-export interface BodyLimitOptions<T extends Record<string, unknown>> {
+export interface BodyLimitOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Maximum allowed size for the request body.
 	 * Can be a number (in bytes) or a string with units (e.g., "1mb", "500kb").
@@ -39,18 +39,20 @@ export interface BodyLimitOptions<T extends Record<string, unknown>> {
 	 * Whether to skip the limit check for specific routes.
 	 * Function receives the context and returns true to skip the check.
 	 */
-	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 }
 
 /**
  * Body limit middleware to restrict the size of incoming request bodies.
  *
  * @template T - The context's data type.
- * @param {BodyLimitOptions<T>} [options={}] - Configuration options for body limit behavior.
- * @returns {Middleware<T>} - A middleware function for handling body size limits.
+ * @param {BodyLimitOptions<T, B>} [options={}] - Configuration options for body limit behavior.
+ * @returns {Middleware<T, B>} - A middleware function for handling body size limits.
  */
-export function bodyLimit<T extends Record<string, unknown> = Record<string, unknown>>(options: BodyLimitOptions<T> = {}): Middleware<T> {
-	const opts: BodyLimitOptions<T> = {
+export function bodyLimit<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: BodyLimitOptions<T, B> = {}
+): Middleware<T, B> {
+	const opts: BodyLimitOptions<T, B> = {
 		maxSize: "1mb",
 		includeHeaders: false,
 		statusCode: 413,
@@ -59,7 +61,7 @@ export function bodyLimit<T extends Record<string, unknown> = Record<string, unk
 
 	const limit = parseSize(opts.maxSize);
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if we should skip this request
 		if (opts.skip && (await opts.skip(ctx))) {
 			return next();
@@ -170,11 +172,14 @@ function parseSize(size?: number | string): number {
  * Gets the content length from the request headers.
  *
  * @template T - The context's data type.
- * @param {Context<T>} ctx - The request context.
+ * @param {Context<T, B>} ctx - The request context.
  * @param {boolean} [includeHeaders=false] - Whether to include header size.
  * @returns {number | null} - The content length in bytes, or null if not available.
  */
-function getContentLength<T extends Record<string, unknown>>(ctx: Context<T>, includeHeaders: boolean = false): number | null {
+function getContentLength<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	ctx: Context<T, B>,
+	includeHeaders: boolean = false
+): number | null {
 	const contentLength = ctx.req.headers.get("Content-Length");
 	let size = contentLength ? parseInt(contentLength, 10) : null;
 

@@ -5,7 +5,7 @@ import type { Context, Middleware } from "@rabbit-company/web";
  *
  * @template T - The shape of the context object.
  */
-export interface BasicAuthOptions<T extends Record<string, unknown>> {
+export interface BasicAuthOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Function to validate the username and password.
 	 *
@@ -14,7 +14,7 @@ export interface BasicAuthOptions<T extends Record<string, unknown>> {
 	 * @param ctx - The request context object.
 	 * @returns A boolean or Promise<boolean> indicating if the credentials are valid.
 	 */
-	validate: (username: string, password: string, ctx: Context<T>) => boolean | Promise<boolean>;
+	validate: (username: string, password: string, ctx: Context<T, B>) => boolean | Promise<boolean>;
 
 	/**
 	 * The authentication realm presented to the user.
@@ -32,7 +32,7 @@ export interface BasicAuthOptions<T extends Record<string, unknown>> {
 	 * Whether to skip basic authentication for specific routes.
 	 * Function receives the context and returns true to skip the authentication.
 	 */
-	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 }
 
 /**
@@ -41,13 +41,15 @@ export interface BasicAuthOptions<T extends Record<string, unknown>> {
  * Adds a user object to the context on successful authentication.
  *
  * @template T - The context's data type.
- * @param {BasicAuthOptions<T>} options - Configuration options including validation function and realm.
- * @returns {Middleware<T>} - Middleware function for basic authentication.
+ * @param {BasicAuthOptions<T, B>} options - Configuration options including validation function and realm.
+ * @returns {Middleware<T, B>} - Middleware function for basic authentication.
  */
-export function basicAuth<T extends Record<string, unknown> = Record<string, unknown>>(options: BasicAuthOptions<T>): Middleware<T> {
+export function basicAuth<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: BasicAuthOptions<T, B>
+): Middleware<T, B> {
 	const { skip, validate, realm = "Restricted", contextKey = "user" as keyof T } = options;
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if we should skip this request
 		if (skip && (await skip(ctx))) {
 			return next();

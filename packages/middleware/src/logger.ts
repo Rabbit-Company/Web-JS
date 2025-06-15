@@ -4,7 +4,7 @@ import { Logger, Levels, ConsoleTransport } from "@rabbit-company/logger";
 /**
  * Options for configuring the logger middleware.
  */
-export interface LoggerOptions<T extends Record<string, unknown>> {
+export interface LoggerOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Logger instance to use. If not provided, a default logger will be created.
 	 */
@@ -107,7 +107,7 @@ export interface LoggerOptions<T extends Record<string, unknown>> {
 	/**
 	 * Function to generate request ID. If not provided, a random ID will be generated.
 	 */
-	generateRequestId?: (ctx: Context<T>) => string;
+	generateRequestId?: (ctx: Context<T, B>) => string;
 
 	/**
 	 * Key in context where request ID will be stored.
@@ -118,27 +118,27 @@ export interface LoggerOptions<T extends Record<string, unknown>> {
 	/**
 	 * Function to extract user identifier for logging.
 	 */
-	getUserId?: (ctx: Context<T>) => string | undefined;
+	getUserId?: (ctx: Context<T, B>) => string | undefined;
 
 	/**
 	 * Function to determine if a request should be skipped.
 	 */
-	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 
 	/**
 	 * Custom message formatter for request logs.
 	 */
-	formatRequestMessage?: (ctx: Context<T>, requestId: string) => string;
+	formatRequestMessage?: (ctx: Context<T, B>, requestId: string) => string;
 
 	/**
 	 * Custom message formatter for response logs.
 	 */
-	formatResponseMessage?: (ctx: Context<T>, requestId: string, duration: number, statusCode: number) => string;
+	formatResponseMessage?: (ctx: Context<T, B>, requestId: string, duration: number, statusCode: number) => string;
 
 	/**
 	 * Additional metadata to include in all logs.
 	 */
-	metadata?: Record<string, unknown> | ((ctx: Context<T>) => Record<string, unknown>);
+	metadata?: Record<string, unknown> | ((ctx: Context<T, B>) => Record<string, unknown>);
 }
 
 /**
@@ -210,9 +210,11 @@ export interface LoggerOptions<T extends Record<string, unknown>> {
  * }));
  * ```
  */
-export function logger<T extends Record<string, unknown> = Record<string, unknown>>(options: LoggerOptions<T> = {}): Middleware<T> {
+export function logger<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: LoggerOptions<T, B> = {}
+): Middleware<T, B> {
 	// Apply preset configurations
-	const presetConfig = getPresetConfiguration<T>(options.preset);
+	const presetConfig = getPresetConfiguration<T, B>(options.preset);
 	const mergedOptions = { ...presetConfig, ...options };
 
 	const {
@@ -238,7 +240,7 @@ export function logger<T extends Record<string, unknown> = Record<string, unknow
 		formatRequestMessage = defaultRequestFormatter,
 		formatResponseMessage = defaultResponseFormatter,
 		metadata,
-	}: LoggerOptions<T> = mergedOptions;
+	}: LoggerOptions<T, B> = mergedOptions;
 
 	// Create default logger if none provided
 	const loggerInstance =
@@ -251,7 +253,7 @@ export function logger<T extends Record<string, unknown> = Record<string, unknow
 	// Normalize exclude headers to lowercase
 	const normalizedExcludeHeaders = excludeHeaders.map((h) => h.toLowerCase());
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if request should be skipped
 		if (skip && skip(ctx)) {
 			return next();
@@ -386,7 +388,7 @@ export function logger<T extends Record<string, unknown> = Record<string, unknow
 /**
  * Get preset configuration for common logging scenarios.
  */
-function getPresetConfiguration<T extends Record<string, unknown>>(preset?: string): LoggerOptions<T> {
+function getPresetConfiguration<T extends Record<string, unknown>, B extends Record<string, unknown>>(preset?: string): LoggerOptions<T, B> {
 	switch (preset) {
 		case "minimal":
 			return {
@@ -440,7 +442,9 @@ function getPresetConfiguration<T extends Record<string, unknown>>(preset?: stri
 			};
 	}
 }
-function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<string, unknown>>(ctx: Context<T>): string {
+function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	ctx: Context<T, B>
+): string {
 	// Try to use existing request ID from headers
 	const existingId = ctx.req.headers.get("x-request-id") || ctx.req.headers.get("x-correlation-id");
 
@@ -460,7 +464,10 @@ function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<st
 /**
  * Default request message formatter.
  */
-function defaultRequestFormatter<T extends Record<string, unknown> = Record<string, unknown>>(ctx: Context<T>, requestId: string): string {
+function defaultRequestFormatter<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	ctx: Context<T, B>,
+	requestId: string
+): string {
 	const url = new URL(ctx.req.url);
 	return `${ctx.req.method} - ${ctx.clientIp} - ${url.pathname}${url.search}`;
 }
@@ -468,8 +475,8 @@ function defaultRequestFormatter<T extends Record<string, unknown> = Record<stri
 /**
  * Default response message formatter.
  */
-function defaultResponseFormatter<T extends Record<string, unknown> = Record<string, unknown>>(
-	ctx: Context<T>,
+function defaultResponseFormatter<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	ctx: Context<T, B>,
 	requestId: string,
 	duration: number,
 	statusCode: number
@@ -481,8 +488,8 @@ function defaultResponseFormatter<T extends Record<string, unknown> = Record<str
 /**
  * Build request metadata object.
  */
-async function buildRequestMetadata<T extends Record<string, unknown>>(
-	ctx: Context<T>,
+async function buildRequestMetadata<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	ctx: Context<T, B>,
 	requestId: string | undefined,
 	userId: string | undefined,
 	baseMetadata: Record<string, unknown>,
@@ -594,9 +601,9 @@ function buildResponseMetadata(
 /**
  * Get metadata from options.
  */
-function getMetadata<T extends Record<string, unknown>>(
-	metadata: Record<string, unknown> | ((ctx: Context<T>) => Record<string, unknown>) | undefined,
-	ctx: Context<T>
+function getMetadata<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	metadata: Record<string, unknown> | ((ctx: Context<T, B>) => Record<string, unknown>) | undefined,
+	ctx: Context<T, B>
 ): Record<string, unknown> {
 	if (!metadata) return {};
 	if (typeof metadata === "function") return metadata(ctx);

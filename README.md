@@ -4,7 +4,7 @@
 [![JSR Version](https://jsr.io/badges/@rabbit-company/web)](https://jsr.io/@rabbit-company/web)
 [![License](https://img.shields.io/npm/l/@rabbit-company/web)](LICENSE)
 
-A high-performance web framework built for **Bun**, **Deno** and **NodeJS** with trie-based routing, middleware support, and TypeScript-first design. ⚡
+A high-performance web framework built for **Bun**, **Deno**, **NodeJS** and **Cloudflare Workers** with trie-based routing, middleware support, and TypeScript-first design. ⚡
 
 ## ✨ Features
 
@@ -50,8 +50,13 @@ app.get('/users/:id', async (ctx) => {
 	return ctx.json(user);
 });
 
-// Start server
+// Start server on Node, Deno or Bun
 app.listen({ port: 3000 });
+
+// Start server on Cloudflare Workers
+export default {
+	fetch: app.handleCloudflare,
+};
 
 console.log('Server running at http://localhost:3000');
 ```

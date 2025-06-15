@@ -3,7 +3,7 @@ import type { Context, Middleware } from "@rabbit-company/web";
 /**
  * IP restriction middleware configuration
  */
-export interface IpRestrictionConfig {
+export interface IpRestrictionConfig<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Mode of operation
 	 * - "whitelist": Only allow IPs in the list
@@ -36,7 +36,7 @@ export interface IpRestrictionConfig {
 	 * @param ctx - Request context
 	 * @returns True to skip restriction
 	 */
-	skip?: (ctx: Context) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 
 	/**
 	 * Whether to log denied requests
@@ -48,7 +48,7 @@ export interface IpRestrictionConfig {
 	 * Custom logger function
 	 * @default console.warn
 	 */
-	logger?: (message: string, ip: string, ctx: Context) => void;
+	logger?: (message: string, ip: string, ctx: Context<T, B>) => void;
 
 	/**
 	 * Whether to set a custom header with the restriction result
@@ -68,24 +68,27 @@ export interface IpRestrictionConfig {
  * Resolved configuration with all required fields
  * @internal
  */
-interface ResolvedIpRestrictionConfig extends Required<IpRestrictionConfig> {
+interface ResolvedIpRestrictionConfig<T extends Record<string, unknown>, B extends Record<string, unknown>> extends Required<IpRestrictionConfig<T, B>> {
 	message: string | ((ip: string) => string);
 }
 
 /**
  * Dynamic IP restriction instance
  */
-export interface DynamicIpRestriction {
+export interface DynamicIpRestriction<
+	T extends Record<string, unknown> = Record<string, unknown>,
+	B extends Record<string, unknown> = Record<string, unknown>
+> {
 	/**
 	 * The middleware function to use in your app
 	 */
-	middleware: Middleware;
+	middleware: Middleware<T, B>;
 
 	/**
 	 * Update the configuration
 	 * @param newConfig - Partial configuration to merge
 	 */
-	update(newConfig: Partial<IpRestrictionConfig>): void;
+	update(newConfig: Partial<IpRestrictionConfig<T, B>>): void;
 
 	/**
 	 * Add an IP address to the list
@@ -103,7 +106,7 @@ export interface DynamicIpRestriction {
 	 * Get the current configuration
 	 * @returns A copy of the current configuration
 	 */
-	getConfig(): IpRestrictionConfig;
+	getConfig(): IpRestrictionConfig<T, B>;
 }
 
 /**
@@ -154,9 +157,9 @@ export interface DynamicIpRestriction {
  * }));
  * ```
  */
-export function ipRestriction(config: IpRestrictionConfig): Middleware {
+export function ipRestriction<T extends Record<string, unknown>, B extends Record<string, unknown>>(config: IpRestrictionConfig<T, B>): Middleware<T, B> {
 	// Apply defaults with explicit type
-	const options: ResolvedIpRestrictionConfig = {
+	const options: ResolvedIpRestrictionConfig<T, B> = {
 		statusCode: 403,
 		message: "Access denied",
 		logDenied: false,
@@ -165,12 +168,12 @@ export function ipRestriction(config: IpRestrictionConfig): Middleware {
 		headerName: "X-IP-Restriction",
 		skip: undefined,
 		...config,
-	} as ResolvedIpRestrictionConfig;
+	} as ResolvedIpRestrictionConfig<T, B>;
 
 	// Pre-process IPs for faster lookup
 	const processedIps = processIpList(options.ips);
 
-	const middleware: Middleware = async (ctx: Context, next: () => Promise<void | Response>): Promise<void | Response> => {
+	const middleware: Middleware<T, B> = async (ctx: Context<T, B>, next: () => Promise<void | Response>): Promise<void | Response> => {
 		// Skip if configured
 		if (options.skip && (await options.skip(ctx))) {
 			return next();
@@ -231,7 +234,7 @@ export const ipRestrictionPresets = {
 	 * Allow only localhost connections
 	 * @returns IP restriction config for localhost only
 	 */
-	localhostOnly: (): IpRestrictionConfig => ({
+	localhostOnly: (): IpRestrictionConfig<Record<string, unknown>, Record<string, unknown>> => ({
 		mode: "whitelist",
 		ips: ["127.0.0.1", "::1"],
 		message: "Access restricted to localhost",
@@ -241,7 +244,7 @@ export const ipRestrictionPresets = {
 	 * Allow only private network IPs (RFC 1918)
 	 * @returns IP restriction config for private networks
 	 */
-	privateNetworkOnly: (): IpRestrictionConfig => ({
+	privateNetworkOnly: (): IpRestrictionConfig<Record<string, unknown>, Record<string, unknown>> => ({
 		mode: "whitelist",
 		ips: [
 			"10.0.0.0/8", // Class A private
@@ -556,14 +559,16 @@ function expandIpv6(ip: string): string {
  * restriction.update({ mode: "whitelist" });
  * ```
  */
-export function createDynamicIpRestriction(initialConfig: IpRestrictionConfig): DynamicIpRestriction {
-	let config: IpRestrictionConfig = { ...initialConfig };
-	let middleware: Middleware = ipRestriction(config);
+export function createDynamicIpRestriction<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	initialConfig: IpRestrictionConfig<T, B>
+): DynamicIpRestriction<T, B> {
+	let config: IpRestrictionConfig<T, B> = { ...initialConfig };
+	let middleware: Middleware<T, B> = ipRestriction(config);
 
 	return {
-		middleware: (ctx: Context, next: () => Promise<void | Response>): Response | Promise<void | Response> => middleware(ctx, next),
+		middleware: (ctx: Context<T, B>, next: () => Promise<void | Response>): Response | Promise<void | Response> => middleware(ctx, next),
 
-		update(newConfig: Partial<IpRestrictionConfig>): void {
+		update(newConfig: Partial<IpRestrictionConfig<T, B>>): void {
 			config = { ...config, ...newConfig };
 			middleware = ipRestriction(config);
 		},
@@ -578,7 +583,7 @@ export function createDynamicIpRestriction(initialConfig: IpRestrictionConfig): 
 			middleware = ipRestriction(config);
 		},
 
-		getConfig(): IpRestrictionConfig {
+		getConfig(): IpRestrictionConfig<T, B> {
 			return { ...config };
 		},
 	};

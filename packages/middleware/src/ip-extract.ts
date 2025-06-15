@@ -125,7 +125,7 @@ const CLOUD_CONFIGS: Record<string, CloudProviderConfig> = {
  *
  * @template T - Context type parameter
  * @param {IpExtractionConfig | IpExtractionPreset} [config="direct"] - Configuration object or preset name
- * @returns {Middleware<T>} IP extraction middleware
+ * @returns {Middleware<T, B>} IP extraction middleware
  *
  * @example
  * ```typescript
@@ -152,9 +152,9 @@ const CLOUD_CONFIGS: Record<string, CloudProviderConfig> = {
  * });
  * ```
  */
-export function ipExtract<T extends Record<string, unknown> = Record<string, unknown>>(
+export function ipExtract<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
 	config: IpExtractionConfig | keyof typeof IP_EXTRACTION_PRESETS = "direct"
-): Middleware<T> {
+): Middleware<T, B> {
 	// Handle preset strings
 	const resolvedConfig: IpExtractionConfig = typeof config === "string" ? IP_EXTRACTION_PRESETS[config] : config;
 
@@ -176,7 +176,7 @@ export function ipExtract<T extends Record<string, unknown> = Record<string, unk
 	// Create extractor function once
 	const extractIp = createSecureIpExtractor(finalConfig);
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		try {
 			// Extract IP and store it directly in context
 			ctx.clientIp = extractIp(ctx);
@@ -199,7 +199,7 @@ export function ipExtract<T extends Record<string, unknown> = Record<string, unk
  * extracted by the ipExtract middleware.
  *
  * @template T - Context type parameter
- * @param {Context<T>} ctx - Request context
+ * @param {Context<T, B>} ctx - Request context
  * @returns {string | undefined} The client IP address or undefined
  *
  * @example
@@ -213,7 +213,7 @@ export function ipExtract<T extends Record<string, unknown> = Record<string, unk
  * });
  * ```
  */
-export function getClientIp<T extends Record<string, unknown>>(ctx: Context<T>): string | undefined {
+export function getClientIp<T extends Record<string, unknown>, B extends Record<string, unknown>>(ctx: Context<T, B>): string | undefined {
 	return ctx.clientIp;
 }
 
@@ -222,11 +222,14 @@ export function getClientIp<T extends Record<string, unknown>>(ctx: Context<T>):
  *
  * @internal
  * @template T - Context type parameter
- * @param {Context<T>} ctx - Request context
+ * @param {Context<T, B>} ctx - Request context
  * @param {Required<IpExtractionConfig>} config - Resolved configuration
  * @returns {string | undefined} Extracted IP address
  */
-function secureExtractClientIp<T extends Record<string, unknown>>(ctx: Context<T>, config: Required<IpExtractionConfig>): string | undefined {
+function secureExtractClientIp<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	ctx: Context<T, B>,
+	config: Required<IpExtractionConfig>
+): string | undefined {
 	// 1. If not trusting proxies, only use direct connection IP
 	if (!config.trustProxy) {
 		return ctx.clientIp;
@@ -489,10 +492,10 @@ function normalizeIp(ip: string): string {
  * Function type for IP extraction
  * @callback IpExtractor
  * @template T
- * @param {Context<T>} ctx - Request context
+ * @param {Context<T, B>} ctx - Request context
  * @returns {string | undefined} Extracted IP
  */
-type IpExtractor = <T extends Record<string, unknown>>(ctx: Context<T>) => string | undefined;
+type IpExtractor = <T extends Record<string, unknown>, B extends Record<string, unknown>>(ctx: Context<T, B>) => string | undefined;
 
 /**
  * Create a secure IP extractor function with configuration
@@ -502,7 +505,7 @@ type IpExtractor = <T extends Record<string, unknown>>(ctx: Context<T>) => strin
  * @returns {IpExtractor} IP extractor function
  */
 function createSecureIpExtractor(config: Required<IpExtractionConfig>): IpExtractor {
-	return <T extends Record<string, unknown>>(ctx: Context<T>) => secureExtractClientIp(ctx, config);
+	return <T extends Record<string, unknown>, B extends Record<string, unknown>>(ctx: Context<T, B>) => secureExtractClientIp(ctx, config);
 }
 
 /**

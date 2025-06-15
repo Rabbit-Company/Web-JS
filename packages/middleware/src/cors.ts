@@ -66,12 +66,14 @@ const defaults: CorsOptions = {
  *
  * @template T - The context's data type.
  * @param {CorsOptions} [options={}] - Configuration options for CORS behavior.
- * @returns {Middleware<T>} - A middleware function for handling CORS headers.
+ * @returns {Middleware<T, B>} - A middleware function for handling CORS headers.
  */
-export function cors<T extends Record<string, unknown> = Record<string, unknown>>(options: CorsOptions = {}): Middleware<T> {
+export function cors<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: CorsOptions = {}
+): Middleware<T, B> {
 	const opts = { ...defaults, ...options };
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		const origin = ctx.req.headers.get("Origin") || "";
 
 		// Check if origin is allowed

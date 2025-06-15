@@ -28,6 +28,8 @@ const Runtime = {
 		typeof (globalThis as any).process !== "undefined" &&
 		typeof (globalThis as any).Bun === "undefined" &&
 		typeof (globalThis as any).Deno === "undefined",
+	/** True if running in Cloudflare Workers */
+	isCloudflareWorkers: typeof (globalThis as any).navigator !== "undefined" && (globalThis as any).navigator.userAgent === "Cloudflare-Workers",
 };
 
 /**
@@ -36,15 +38,15 @@ const Runtime = {
  *
  * @template T - The type of the context state object
  */
-class TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
+class TrieNode<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> {
 	/** Map of static path segments to their corresponding child nodes */
-	children = new Map<string, TrieNode<T>>();
+	children = new Map<string, TrieNode<T, B>>();
 	/** Parameter child node with its parameter name (e.g., for ":id" routes) */
-	paramChild?: { node: TrieNode<T>; name: string };
+	paramChild?: { node: TrieNode<T, B>; name: string };
 	/** Wildcard child node (for "*" routes that match remaining path segments) */
-	wildcardChild?: TrieNode<T>;
+	wildcardChild?: TrieNode<T, B>;
 	/** Array of middleware handlers to execute when this node represents a complete route */
-	handlers?: Middleware<T>[];
+	handlers?: Middleware<T, B>[];
 	/** HTTP method this node handles (GET, POST, etc.) */
 	method?: Method;
 	/** Unique identifier for tracking this route for removal */
@@ -97,13 +99,13 @@ const EMPTY_SEARCH_PARAMS = new URLSearchParams();
  * });
  * ```
  */
-export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
+export class Web<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> {
 	/** Array of all registered routes */
-	private routes: (Route<T> & { id: string })[] = [];
+	private routes: (Route<T, B> & { id: string })[] = [];
 	/** Array of all registered middleware */
-	private middlewares: (MiddlewareRoute<T> & { id: string })[] = [];
+	private middlewares: (MiddlewareRoute<T, B> & { id: string })[] = [];
 	/** Cache for method-specific middleware to avoid filtering on each request */
-	private methodMiddlewareCache = new Map<Method, MiddlewareRoute<T>[]>();
+	private methodMiddlewareCache = new Map<Method, MiddlewareRoute<T, B>[]>();
 	/** Cache for parsed URLs to avoid repeated parsing */
 	private urlCache = new Map<string, { pathname: string; searchParams?: URLSearchParams }>();
 	/** Cache for path segments to avoid repeated splitting */
@@ -111,12 +113,12 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	/** Cache for compiled route matchers */
 	private matcherCache = new Map<string, (urlSegments: string[]) => MatchResult>();
 	/** Cache for frequently matched routes */
-	private routeMatchCache = new Map<string, { handlers?: Middleware<T>[]; params: Record<string, string> } | null>();
+	private routeMatchCache = new Map<string, { handlers?: Middleware<T, B>[]; params: Record<string, string> } | null>();
 	/** Counter for generating unique IDs */
 	private idCounter = 0;
 
 	/** Trie roots for each HTTP method for fast route matching */
-	private roots: Record<Method, TrieNode<T>> = {
+	private roots: Record<Method, TrieNode<T, B>> = {
 		GET: new TrieNode(),
 		POST: new TrieNode(),
 		PUT: new TrieNode(),
@@ -132,6 +134,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	constructor() {
 		this.handle = this.handle.bind(this);
 		this.handleBun = this.handleBun.bind(this);
+		this.handleCloudflare = this.handleCloudflare.bind(this);
 	}
 
 	/**
@@ -179,7 +182,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * Adds a route to the trie structure (internal method)
 	 * @private
 	 */
-	private addRouteToTrie(method: Method, path: string, handlers: Middleware<T>[], routeId: string) {
+	private addRouteToTrie(method: Method, path: string, handlers: Middleware<T, B>[], routeId: string) {
 		const segments = this.getPathSegments(path);
 		let node = this.roots[method];
 
@@ -213,10 +216,10 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	}
 
 	/** Error handler function for handling uncaught errors */
-	private errorHandler?: (err: Error, ctx: Context<T>) => Response | Promise<Response>;
+	private errorHandler?: (err: Error, ctx: Context<T, B>) => Response | Promise<Response>;
 
 	/** 404 Not Found handler function */
-	private notFoundHandler?: (ctx: Context<T>) => Response | Promise<Response>;
+	private notFoundHandler?: (ctx: Context<T, B>) => Response | Promise<Response>;
 
 	/**
 	 * Sets a global error handler for the application.
@@ -233,7 +236,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	onError(handler: (err: Error, ctx: Context<T>) => Response | Promise<Response>): this {
+	onError(handler: (err: Error, ctx: Context<T, B>) => Response | Promise<Response>): this {
 		this.errorHandler = handler;
 		return this;
 	}
@@ -283,7 +286,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	onNotFound(handler: (ctx: Context<T>) => Response | Promise<Response>): this {
+	onNotFound(handler: (ctx: Context<T, B>) => Response | Promise<Response>): this {
 		this.notFoundHandler = handler;
 		return this;
 	}
@@ -407,7 +410,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	use(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): this {
+	use(...args: [Middleware<T, B>] | [string, Middleware<T, B>] | [Method, string, Middleware<T, B>]): this {
 		this.addMiddleware(...args);
 		return this;
 	}
@@ -499,7 +502,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * app.removeMiddleware(globalId);
 	 * ```
 	 */
-	addMiddleware(...args: [Middleware<T>] | [string, Middleware<T>] | [Method, string, Middleware<T>]): string {
+	addMiddleware(...args: [Middleware<T, B>] | [string, Middleware<T, B>] | [Method, string, Middleware<T, B>]): string {
 		this.clearCaches();
 		const id = this.generateId();
 
@@ -589,7 +592,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * app.removeRoute(routeId);
 	 * ```
 	 */
-	addRoute(method: Method, path: string, ...handlers: Middleware<T>[]): string {
+	addRoute(method: Method, path: string, ...handlers: Middleware<T, B>[]): string {
 		this.clearCaches();
 		const id = this.generateId();
 
@@ -744,7 +747,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * }
 	 * ```
 	 */
-	match(method: Method, path: string): { handlers?: Middleware<T>[]; params: Record<string, string> } | null {
+	match(method: Method, path: string): { handlers?: Middleware<T, B>[]; params: Record<string, string> } | null {
 		// Check route match cache first
 		const cacheKey = `${method}:${path}`;
 		const cached = this.routeMatchCache.get(cacheKey);
@@ -827,7 +830,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @returns Array of middleware routes that apply to the method
 	 * @private
 	 */
-	private getMethodMiddlewares(method: Method): MiddlewareRoute<T>[] {
+	private getMethodMiddlewares(method: Method): MiddlewareRoute<T, B>[] {
 		if (this.methodMiddlewareCache.has(method)) {
 			return this.methodMiddlewareCache.get(method)!;
 		}
@@ -944,7 +947,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	get(path: string, ...handlers: Middleware<T>[]): this {
+	get(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("GET", path, ...handlers);
 		return this;
 	}
@@ -965,7 +968,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	post(path: string, ...handlers: Middleware<T>[]): this {
+	post(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("POST", path, ...handlers);
 		return this;
 	}
@@ -1000,7 +1003,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * );
 	 * ```
 	 */
-	put(path: string, ...handlers: Middleware<T>[]): this {
+	put(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("PUT", path, ...handlers);
 		return this;
 	}
@@ -1020,7 +1023,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	delete(path: string, ...handlers: Middleware<T>[]): this {
+	delete(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("DELETE", path, ...handlers);
 		return this;
 	}
@@ -1053,7 +1056,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * );
 	 * ```
 	 */
-	patch(path: string, ...handlers: Middleware<T>[]): this {
+	patch(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("PATCH", path, ...handlers);
 		return this;
 	}
@@ -1092,7 +1095,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	options(path: string, ...handlers: Middleware<T>[]): this {
+	options(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute("OPTIONS", path, ...handlers);
 		return this;
 	}
@@ -1113,11 +1116,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * });
 	 * ```
 	 */
-	head(path: string, ...handlers: Middleware<T>[]): this {
+	head(path: string, ...handlers: Middleware<T, B>[]): this {
 		this.addRoute(
 			"HEAD",
 			path,
-			...handlers.map((handler) => async (ctx: Context<T>, next: Next) => {
+			...handlers.map((handler) => async (ctx: Context<T, B>, next: Next) => {
 				const res = await handler(ctx, next);
 				if (res instanceof Response) {
 					// Strip the body for HEAD requests
@@ -1138,6 +1141,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 * @param req - The incoming Request object
 	 * @param params - URL parameters extracted from the path
 	 * @param parsedUrl - Pre-parsed URL components
+	 * @param clientIp - Optional client IP address
+	 * @param env - Optional environment-specific bindings or variables (e.g., Cloudflare environment)
 	 * @returns Context object with request data and helper methods
 	 * @private
 	 */
@@ -1145,18 +1150,20 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		req: Request,
 		params: Record<string, string>,
 		parsedUrl: { pathname: string; searchParams?: URLSearchParams },
-		clientIp?: string
-	): Context<T> {
+		clientIp?: string,
+		env?: B
+	): Context<T, B> {
 		// Initialize response headers storage
 		const responseHeaders = new Headers();
 
 		// Pre-allocate state object
 		const state = {} as T;
 
-		const ctx: Context<T> = {
+		const ctx: Context<T, B> = {
 			req,
 			params,
 			state,
+			env: {} as B,
 			clientIp,
 			header: (name: string, value: string) => {
 				responseHeaders.set(name, value);
@@ -1305,7 +1312,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			let finalParams = matched.params;
 
 			// Pre-allocate middleware array with estimated size
-			const middlewares: Middleware<T>[] = new Array(methodMiddlewares.length);
+			const middlewares: Middleware<T, B>[] = new Array(methodMiddlewares.length);
 			let middlewareCount = 0;
 
 			// Only process middlewares if there are any
@@ -1341,7 +1348,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			const handlers = matched.handlers;
 
 			// Build the complete middleware chain
-			const allMiddleware: Middleware<T>[] = [];
+			const allMiddleware: Middleware<T, B>[] = [];
 
 			// Add middlewares first
 			for (let i = 0; i < middlewareCount; i++) {
@@ -1396,10 +1403,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		} catch (err) {
 			if (this.errorHandler) {
 				// We need to create a minimal context for error handling
-				const errorCtx: Context<T> = {
+				const errorCtx: Context<T, B> = {
 					req,
 					params: EMPTY_PARAMS,
 					state: {} as T,
+					env: {} as B,
 					// Minimal implementations for error handling
 					text: (data, status = 500) => new Response(data, { status }),
 					json: (data, status = 500) =>
@@ -1435,7 +1443,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 	 *
 	 * @internal
 	 */
-	private async handleWithIp(req: Request, clientIp?: string): Promise<Response> {
+	private async handleWithIp(req: Request, clientIp?: string, env?: B): Promise<Response> {
 		const method = req.method as Method;
 		const parsedUrl = this.parseUrl(req.url);
 		const path = parsedUrl.pathname;
@@ -1449,14 +1457,14 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			// Ultra-fast path: no middlewares, no parameters, single handler
 			if (this.middlewares.length === 0 && matched.params === EMPTY_PARAMS && matched.handlers?.length === 1) {
-				const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl, clientIp);
+				const ctx = this.createContext(req, EMPTY_PARAMS, parsedUrl, clientIp, env);
 				const result = await matched.handlers[0](ctx, async () => {});
 				return result instanceof Response ? result : new Response("No response returned by handler", { status: 500 });
 			}
 
 			// Fast path: no middlewares, might have parameters
 			if (this.middlewares.length === 0) {
-				const ctx = this.createContext(req, matched.params, parsedUrl, clientIp);
+				const ctx = this.createContext(req, matched.params, parsedUrl, clientIp, env);
 
 				// Optimized handler execution without allocation
 				const handlers = matched.handlers;
@@ -1477,7 +1485,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			let finalParams = matched.params;
 
 			// Pre-allocate middleware array with estimated size
-			const middlewares: Middleware<T>[] = new Array(methodMiddlewares.length);
+			const middlewares: Middleware<T, B>[] = new Array(methodMiddlewares.length);
 			let middlewareCount = 0;
 
 			// Only process middlewares if there are any
@@ -1507,13 +1515,13 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			}
 
 			// Create context once
-			const ctx = this.createContext(req, finalParams, parsedUrl, clientIp);
+			const ctx = this.createContext(req, finalParams, parsedUrl, clientIp, env);
 
 			// Execute middleware and handlers
 			const handlers = matched.handlers;
 
 			// Build the complete middleware chain
-			const allMiddleware: Middleware<T>[] = [];
+			const allMiddleware: Middleware<T, B>[] = [];
 
 			// Add middlewares first
 			for (let i = 0; i < middlewareCount; i++) {
@@ -1568,10 +1576,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		} catch (err) {
 			if (this.errorHandler) {
 				// We need to create a minimal context for error handling
-				const errorCtx: Context<T> = {
+				const errorCtx: Context<T, B> = {
 					req,
 					params: EMPTY_PARAMS,
 					state: {} as T,
+					env: env || ({} as B),
 					clientIp,
 					// Minimal implementations for error handling
 					text: (data, status = 500) => new Response(data, { status }),
@@ -1642,6 +1651,27 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 		// Extract client IP from Deno's ServeHandlerInfo
 		const clientIp = (info as any)?.remoteAddr?.hostname;
 		return this.handleWithIp(req, clientIp);
+	}
+
+	/**
+	 * Request handler optimized for Cloudflare Workers or Pages Functions.
+	 * Automatically extracts the client IP from the "CF-Connecting-IP" header.
+	 *
+	 * @param req - The incoming Request object from Cloudflare
+	 * @param env - Cloudflare environment bindings (type parameter B)
+	 * @param ctx - Optional execution context (used for async operations like waitUntil)
+	 * @returns Promise that resolves to a Response object
+	 *
+	 * @example
+	 * ```ts
+	 * export default {
+	 *   fetch: app.handleCloudflare
+	 * };
+	 * ```
+	 */
+	async handleCloudflare(req: Request, env?: unknown, ctx?: unknown): Promise<Response> {
+		const clientIp = req.headers.get("CF-Connecting-IP") || undefined;
+		return this.handleWithIp(req, clientIp, env as B);
 	}
 
 	/**
@@ -1870,6 +1900,26 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 			}
 
 			return server;
+		} else if (Runtime.isCloudflareWorkers) {
+			const server: Server = {
+				port,
+				hostname,
+				runtime: "cloudflare-workers",
+				instance: null as any, // No actual server instance in Workers
+				stop: async (): Promise<void> => {
+					// Not for Cloudflare Workers
+				},
+			};
+
+			if (onListen) {
+				onListen({
+					port: server.port,
+					hostname: server.hostname,
+					runtime: server.runtime,
+				});
+			}
+
+			return server;
 		} else if (Runtime.isNode) {
 			// Node.js runtime
 			const module: "http" | "https" = nodeOptions.https ? "https" : "http";
@@ -1940,7 +1990,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>> {
 
 			return server;
 		} else {
-			throw new Error(`Unsupported runtime. This framework supports Bun, Deno, and Node.js.`);
+			throw new Error(`Unsupported runtime. This framework supports Bun, Deno, Node.js and Cloudflare Workers.`);
 		}
 	}
 }

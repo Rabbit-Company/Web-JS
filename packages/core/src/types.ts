@@ -21,7 +21,10 @@
  * };
  * ```
  */
-export type Middleware<T extends Record<string, unknown> = Record<string, unknown>> = (ctx: Context<T>, next: Next) => Response | Promise<Response | void>;
+export type Middleware<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> = (
+	ctx: Context<T, B>,
+	next: Next
+) => Response | Promise<Response | void>;
 
 /**
  * Function type for calling the next middleware in the chain.
@@ -56,17 +59,17 @@ export type Next = () => Promise<Response | void>;
  * // Root -> 'users' (static) -> ':id' (param) -> 'posts' (static)
  * ```
  */
-export interface TrieNode<T extends Record<string, unknown> = Record<string, unknown>> {
+export interface TrieNode<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> {
 	/** Map of static path segments to their corresponding child nodes */
-	children: Map<string, TrieNode<T>>;
+	children: Map<string, TrieNode<T, B>>;
 	/** Parameter child node for capturing dynamic segments (e.g., ':id') */
-	paramChild?: TrieNode<T>;
+	paramChild?: TrieNode<T, B>;
 	/** Name of the parameter without the ':' prefix */
 	paramName?: string;
 	/** Wildcard child node for matching remaining path segments ('*') */
-	wildcardChild?: TrieNode<T>;
+	wildcardChild?: TrieNode<T, B>;
 	/** Array of middleware handlers to execute when this node represents a complete route */
-	handlers?: Middleware<T>[];
+	handlers?: Middleware<T, B>[];
 }
 
 /**
@@ -102,7 +105,7 @@ export type MatchResult = {
  *
  * @template T - The type of the context state object
  */
-export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>> = {
+export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> = {
 	/** Optional HTTP method this middleware applies to */
 	method?: Method;
 	/** Optional path pattern this middleware applies to */
@@ -112,7 +115,7 @@ export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, u
 	/** Function to determine if this middleware matches a given URL */
 	match: (url: string) => MatchResult;
 	/** The middleware handler function */
-	handler: Middleware<T>;
+	handler: Middleware<T, B>;
 };
 
 /**
@@ -145,7 +148,7 @@ export type MiddlewareRoute<T extends Record<string, unknown> = Record<string, u
  * };
  * ```
  */
-export interface Context<T extends Record<string, unknown> = Record<string, unknown>> {
+export interface Context<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> {
 	/** The original Request object */
 	req: Request;
 	/** Optional Response object (for advanced use cases) */
@@ -154,6 +157,8 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	params: Record<string, string>;
 	/** Application state object for sharing data between middleware */
 	state: T;
+	/** Only present in Cloudflare Workers */
+	env: B;
 	/** Client IP address, populated by web server or `ip-extract` middleware */
 	clientIp?: string;
 	/**
@@ -319,7 +324,7 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
  *
  * @template T - The type of the context state object
  */
-export interface Route<T extends Record<string, unknown> = Record<string, unknown>> {
+export interface Route<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> {
 	/** HTTP method for this route */
 	method: Method;
 	/** Path pattern for this route */
@@ -327,7 +332,7 @@ export interface Route<T extends Record<string, unknown> = Record<string, unknow
 	/** Function to match URLs against this route pattern */
 	match: (url: string) => { matched: boolean; params: Record<string, string> };
 	/** Array of middleware handlers for this route */
-	handlers: Middleware<T>[];
+	handlers: Middleware<T, B>[];
 }
 
 /**
@@ -339,8 +344,8 @@ export interface Server {
 	port: number;
 	/** The hostname/IP address the server is bound to */
 	hostname: string;
-	/** The runtime name ('bun', 'deno', or 'node') */
-	runtime: "bun" | "deno" | "node";
+	/** The runtime name ('bun', 'deno', 'node' or 'cloudflare-workers') */
+	runtime: "bun" | "deno" | "node" | "cloudflare-workers";
 	/**
 	 * Stops the server gracefully.
 	 * @returns {Promise<void>} Promise that resolves when the server is fully stopped
@@ -432,7 +437,7 @@ export type ListenCallback = (info: {
 	/** The hostname the server is bound to */
 	hostname: string;
 	/** The runtime name */
-	runtime: "bun" | "deno" | "node";
+	runtime: "bun" | "deno" | "node" | "cloudflare-workers";
 }) => void;
 
 /**

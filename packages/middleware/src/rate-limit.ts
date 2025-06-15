@@ -18,7 +18,7 @@ import type { RateLimitConfig, RateLimitResult } from "@rabbit-company/rate-limi
  * };
  * ```
  */
-export interface RateLimitOptions<T extends Record<string, unknown>> {
+export interface RateLimitOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Rate limiting algorithm to use.
 	 *
@@ -123,7 +123,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>> {
 	 * }
 	 * ```
 	 */
-	keyGenerator?: (ctx: Context<T>) => string;
+	keyGenerator?: (ctx: Context<T, B>) => string;
 	/**
 	 * Function to generate endpoint identifier for rate limiting.
 	 * Allows different rate limits for different endpoints.
@@ -141,7 +141,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>> {
 	 * }
 	 * ```
 	 */
-	endpointGenerator?: (ctx: Context<T>) => string;
+	endpointGenerator?: (ctx: Context<T, B>) => string;
 	/**
 	 * Function to conditionally skip rate limiting for certain requests.
 	 * Useful for whitelisting certain IPs, authenticated users, or endpoints.
@@ -158,7 +158,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>> {
 	 * ```
 	 */
 
-	skip?: (ctx: Context<T>) => boolean | Promise<boolean>;
+	skip?: (ctx: Context<T, B>) => boolean | Promise<boolean>;
 
 	/**
 	 * Interval in milliseconds for cleaning up expired rate limit records.
@@ -304,7 +304,9 @@ export interface RateLimitOptions<T extends Record<string, unknown>> {
  * @see {@link createRateLimiter} for creating shared rate limiter instances
  * @see {@link createKeyGenerator} for advanced key generation utilities
  */
-export function rateLimit<T extends Record<string, unknown> = Record<string, unknown>>(options: RateLimitOptions<T> = {}): Middleware<T> {
+export function rateLimit<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	options: RateLimitOptions<T, B> = {}
+): Middleware<T, B> {
 	const {
 		// Algorithm configuration
 		algorithm = Algorithm.FIXED_WINDOW,
@@ -350,7 +352,7 @@ export function rateLimit<T extends Record<string, unknown> = Record<string, unk
 			enableCleanup,
 		} as RateLimitConfig);
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if this request should skip rate limiting
 		if (skip && (await skip(ctx))) {
 			return next();
@@ -407,7 +409,7 @@ export function rateLimit<T extends Record<string, unknown> = Record<string, unk
  *
  * @internal
  */
-function defaultKeyGenerator<T extends Record<string, unknown>>(ctx: Context<T>): string {
+function defaultKeyGenerator<T extends Record<string, unknown>, B extends Record<string, unknown>>(ctx: Context<T, B>): string {
 	return ctx.clientIp || "unknown";
 }
 
@@ -427,7 +429,7 @@ function defaultKeyGenerator<T extends Record<string, unknown>>(ctx: Context<T>)
  *
  * @internal
  */
-function defaultEndpointGenerator<T extends Record<string, unknown>>(ctx: Context<T>): string {
+function defaultEndpointGenerator<T extends Record<string, unknown>, B extends Record<string, unknown>>(ctx: Context<T, B>): string {
 	try {
 		const url = new URL(ctx.req.url);
 		return `${ctx.req.method}:${url.pathname}`;
@@ -514,7 +516,7 @@ export function createRateLimiter(config?: Partial<RateLimitConfig>): RateLimite
  * @interface KeyGeneratorOptions
  * @template T - Context state type
  */
-interface KeyGeneratorOptions<T extends Record<string, unknown>> {
+interface KeyGeneratorOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Custom function to generate the rate limit key.
 	 * If not provided, defaults to using the client IP address.
@@ -522,7 +524,7 @@ interface KeyGeneratorOptions<T extends Record<string, unknown>> {
 	 * @param ctx - Request context
 	 * @returns Rate limit key or null/undefined (will fallback to "unknown")
 	 */
-	custom?: (ctx: Context<T>) => string | null;
+	custom?: (ctx: Context<T, B>) => string | null;
 }
 
 /**
@@ -618,10 +620,12 @@ interface KeyGeneratorOptions<T extends Record<string, unknown>> {
  * });
  * ```
  */
-export function createKeyGenerator<T extends Record<string, unknown>>(options: KeyGeneratorOptions<T>): (ctx: Context<T>) => string {
+export function createKeyGenerator<T extends Record<string, unknown>, B extends Record<string, unknown>>(
+	options: KeyGeneratorOptions<T, B>
+): (ctx: Context<T, B>) => string {
 	const { custom } = options;
 
-	return (ctx: Context<T>): string => {
+	return (ctx: Context<T, B>): string => {
 		if (custom) return custom(ctx) || "unknown";
 		return ctx.clientIp || "unknown";
 	};

@@ -534,7 +534,7 @@ function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
  *
  * @template T - Context type parameter
  * @param {CacheConfig} [config={}] - Cache configuration
- * @returns {Middleware<T>} Cache middleware function
+ * @returns {Middleware<T, B>} Cache middleware function
  *
  * @example
  * ```typescript
@@ -556,7 +556,9 @@ function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
  * }));
  * ```
  */
-export function cache<T extends Record<string, unknown> = Record<string, unknown>>(config: CacheConfig = {}): Middleware<T> {
+export function cache<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+	config: CacheConfig = {}
+): Middleware<T, B> {
 	// Apply defaults
 	const options: Required<Omit<CacheConfig, "includePaths">> & Pick<CacheConfig, "includePaths"> = {
 		storage: new MemoryCache(),
@@ -646,7 +648,7 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		}
 	}
 
-	return async (ctx: Context<T>, next) => {
+	return async (ctx: Context<T, B>, next) => {
 		// Check if method is cacheable
 		if (!options.methods.includes(ctx.req.method)) {
 			return next();
@@ -1136,9 +1138,11 @@ export interface CacheUtils {
 	 * Create a cache invalidation middleware
 	 * @template T - Context type parameter
 	 * @param {CacheInvalidateOptions} options - Invalidation options
-	 * @returns {Middleware<T>} Invalidation middleware
+	 * @returns {Middleware<T, B>} Invalidation middleware
 	 */
-	invalidate<T extends Record<string, unknown> = Record<string, unknown>>(options: CacheInvalidateOptions): Middleware<T>;
+	invalidate<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+		options: CacheInvalidateOptions
+	): Middleware<T, B>;
 
 	/**
 	 * Clear entire cache
@@ -1200,7 +1204,7 @@ export const cacheUtils: CacheUtils = {
 	 *
 	 * @template T - Context type parameter
 	 * @param {CacheInvalidateOptions} options - Invalidation options
-	 * @returns {Middleware<T>} Middleware function
+	 * @returns {Middleware<T, B>} Middleware function
 	 *
 	 * @example
 	 * ```typescript
@@ -1223,7 +1227,9 @@ export const cacheUtils: CacheUtils = {
 	 * );
 	 * ```
 	 */
-	invalidate<T extends Record<string, unknown> = Record<string, unknown>>(options: CacheInvalidateOptions): Middleware<T> {
+	invalidate<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
+		options: CacheInvalidateOptions
+	): Middleware<T, B> {
 		return async (ctx, next) => {
 			const response = await next();
 
