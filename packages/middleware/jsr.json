@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.11.0",
+	"version": "0.12.0",
 	"license": "MIT",
 	"exports": {
 		"./basic-auth": "./src/basic-auth.ts",
