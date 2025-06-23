@@ -192,6 +192,7 @@ app.use(
 	cache({
 		storage: new LRUCache(500),
 		ttl: 600, // 10 minutes
+		hashAlgorithm: "md5", // Faster hash algorithm for ETag generation
 	})
 );
 
@@ -339,6 +340,7 @@ app.use(cache({ storage: new CustomStorage() }));
 - `includePaths`: Only cache these paths (if set)
 - `staleWhileRevalidate`: Serve stale content while revalidating (default: false)
 - `maxStaleAge`: Maximum stale age in seconds (default: 86400)
+- `hashAlgorithm`: Hash algorithm to use for ETag generation (default: blake2b512)
 
 #### Features:
 

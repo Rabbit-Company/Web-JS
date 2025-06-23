@@ -1,5 +1,5 @@
 import type { Context, Middleware } from "@rabbit-company/web";
-import { createHash } from "crypto";
+import { createHash, getHashes } from "node:crypto";
 
 /**
  * Cache storage interface that all cache backends must implement.
@@ -176,6 +176,13 @@ export interface CacheConfig {
 	 * @default 86400 (24 hours)
 	 */
 	maxStaleAge?: number;
+
+	/**
+	 * Hash algorithm to use for ETag generation
+	 * @default 'blake2b512'
+	 * @see getAvailableHashAlgorithms() for available algorithms
+	 */
+	hashAlgorithm?: string;
 }
 
 /**
@@ -503,12 +510,27 @@ function getTTLFromCacheControl(cacheControl: CacheControlDirectives): number | 
 }
 
 /**
- * Generate ETag from response body using BLAKE2b-512
+ * Generate ETag from response body using specified hash algorithm
  * @param {string} body - The response body
+ * @param {string} algorithm - The hash algorithm to use
  * @returns {Promise<string>} The generated ETag
+ * @throws {Error} If the hash algorithm is not supported
  */
-async function generateETag(body: string): Promise<string> {
-	return createHash("blake2b512").update(body).digest("hex");
+async function generateETag(body: string, algorithm: string): Promise<string> {
+	try {
+		return createHash(algorithm).update(body).digest("hex");
+	} catch (error) {
+		throw new Error(`Hash algorithm '${algorithm}' is not supported. Available algorithms: ${getHashes().join(", ")}`);
+	}
+}
+
+/**
+ * Validate if a hash algorithm is available
+ * @param {string} algorithm - The hash algorithm to validate
+ * @returns {boolean} True if the algorithm is available
+ */
+function isHashAlgorithmAvailable(algorithm: string): boolean {
+	return getHashes().includes(algorithm);
 }
 
 /**
@@ -575,8 +597,17 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		includePaths: undefined,
 		staleWhileRevalidate: false,
 		maxStaleAge: 86400,
+		hashAlgorithm: "blake2b512",
 		...config,
 	};
+
+	/*
+	// Validate hash algorithm on initialization (Disable validation because of a bug in Bun)
+	if (!isHashAlgorithmAvailable(options.hashAlgorithm)) {
+		const availableHashes = getHashes();
+		throw new Error(`Hash algorithm '${options.hashAlgorithm}' is not supported. Available algorithms: ${availableHashes.join(", ")}`);
+	}
+	*/
 
 	// Background revalidation tracker
 	const revalidating = new Set<string>();
@@ -607,7 +638,7 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		// Generate ETag if not present
 		let etag = response.headers.get("etag");
 		if (!etag) {
-			etag = await generateETag(body);
+			etag = await generateETag(body, options.hashAlgorithm);
 		}
 
 		// Extract headers
@@ -802,7 +833,7 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 				// Clone response to read body for ETag generation
 				const cloned = response.clone();
 				const body = await cloned.text();
-				const etag = await generateETag(body);
+				const etag = await generateETag(body, options.hashAlgorithm);
 
 				// Create new response with ETag header
 				const headers = new Headers(response.headers);
@@ -833,6 +864,24 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 
 		return response;
 	};
+}
+
+/**
+ * Get list of available hash algorithms for ETags
+ *
+ * Utility function to list all hash algorithms available for ETags.
+ *
+ * @returns {string[]} Array of available hash algorithm names
+ *
+ * @example
+ * ```typescript
+ * const algorithms = getAvailableHashAlgorithms();
+ * console.log('Available algorithms:', algorithms);
+ * // Output: ['blake2b512', 'blake2s256', 'md5', 'sha1', 'sha256', 'sha512', ...]
+ * ```
+ */
+export function getAvailableHashAlgorithms(): string[] {
+	return getHashes();
 }
 
 /**
