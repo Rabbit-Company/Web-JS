@@ -341,6 +341,10 @@ app.use(cache({ storage: new CustomStorage() }));
 - `staleWhileRevalidate`: Serve stale content while revalidating (default: false)
 - `maxStaleAge`: Maximum stale age in seconds (default: 86400)
 - `hashAlgorithm`: Hash algorithm to use for ETag generation (default: blake2b512)
+- `generateETags`: Whether to generate ETags for responses (default: true)
+- `shouldGenerateETag`: Function to determine if ETag should be generated for a specific response (default: Smart function that skips large files and certain content types)
+- `maxETagBodySize`: Maximum body size in bytes for ETag generation (default: 1048576)
+- `skipETagContentTypes`: Content types to skip ETag generation for (default: ['image/', 'video/', 'audio/', 'application/octet-stream', 'application/zip', 'application/pdf'])
 
 #### Features:
 

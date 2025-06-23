@@ -423,6 +423,514 @@ describe("Cache Middleware", () => {
 		});
 	});
 
+	describe("generateETags Option", () => {
+		test("should generate ETags by default", async () => {
+			app.use(cache());
+			app.get("/test", (ctx) => ctx.json({ data: "test content" }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/test`);
+				const etag = res.headers.get("etag");
+				expect(etag).toBeDefined();
+				expect(etag).not.toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should not generate ETags when disabled", async () => {
+			app.use(cache({ generateETags: false }));
+			app.get("/test", (ctx) => ctx.json({ data: "test content" }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/test`);
+				const etag = res.headers.get("etag");
+				expect(etag).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should still cache responses without ETags", async () => {
+			app.use(cache({ generateETags: false }));
+			app.get("/test", (ctx) => {
+				requestCount++;
+				return ctx.json({ count: requestCount });
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// First request
+				const res1 = await fetch(`http://localhost:${server.port}/test`);
+				expect(res1.headers.get("x-cache-status")).toBe("MISS");
+				expect(res1.headers.get("etag")).toBeNull();
+
+				// Second request - should be cached even without ETag
+				const res2 = await fetch(`http://localhost:${server.port}/test`);
+				expect(res2.headers.get("x-cache-status")).toBe("HIT");
+				expect(res2.headers.get("etag")).toBeNull();
+				const data2 = await res2.json();
+				expect(data2.count).toBe(1); // Same count, cached
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should preserve existing ETags when generateETags is false", async () => {
+			app.use(cache({ generateETags: false }));
+			app.get("/test", (ctx) => {
+				return new Response(JSON.stringify({ data: "test" }), {
+					headers: {
+						"Content-Type": "application/json",
+						ETag: '"custom-etag-123"',
+					},
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/test`);
+				expect(res.headers.get("etag")).toBe('"custom-etag-123"');
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
+	describe("maxETagBodySize Option", () => {
+		test("should not generate ETag for large bodies", async () => {
+			app.use(cache({ maxETagBodySize: 100 })); // 100 bytes max
+
+			app.get("/small", (ctx) => ctx.json({ data: "small" })); // < 100 bytes
+			app.get("/large", (ctx) => {
+				// Create a response larger than 100 bytes
+				const largeData = { data: "x".repeat(200) };
+				return ctx.json(largeData);
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// Small response should have ETag
+				const resSmall = await fetch(`http://localhost:${server.port}/small`);
+				expect(resSmall.headers.get("etag")).toBeDefined();
+
+				// Large response should not have ETag
+				const resLarge = await fetch(`http://localhost:${server.port}/large`);
+				expect(resLarge.headers.get("etag")).toBeNull();
+
+				// But should still be cached
+				const resLarge2 = await fetch(`http://localhost:${server.port}/large`);
+				expect(resLarge2.headers.get("x-cache-status")).toBe("HIT");
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should respect Content-Length header for size check", async () => {
+			app.use(cache({ maxETagBodySize: 1000 }));
+
+			app.get("/with-length", (ctx) => {
+				const body = "x".repeat(2000); // 2000 bytes
+				return new Response(body, {
+					headers: {
+						"Content-Type": "text/plain",
+						"Content-Length": "2000",
+					},
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// Should not generate ETag based on Content-Length
+				const res = await fetch(`http://localhost:${server.port}/with-length`);
+				expect(res.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
+	describe("skipETagContentTypes Option", () => {
+		test("should skip ETag generation for specified content types", async () => {
+			app.use(cache());
+
+			app.get("/json", (ctx) => ctx.json({ data: "test" }));
+			app.get("/image", (ctx) => {
+				return new Response("fake-image-data", {
+					headers: { "Content-Type": "image/png" },
+				});
+			});
+			app.get("/video", (ctx) => {
+				return new Response("fake-video-data", {
+					headers: { "Content-Type": "video/mp4" },
+				});
+			});
+			app.get("/audio", (ctx) => {
+				return new Response("fake-audio-data", {
+					headers: { "Content-Type": "audio/mpeg" },
+				});
+			});
+			app.get("/pdf", (ctx) => {
+				return new Response("fake-pdf-data", {
+					headers: { "Content-Type": "application/pdf" },
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// JSON should have ETag
+				const resJson = await fetch(`http://localhost:${server.port}/json`);
+				expect(resJson.headers.get("etag")).toBeDefined();
+
+				// Image should not have ETag
+				const resImage = await fetch(`http://localhost:${server.port}/image`);
+				expect(resImage.headers.get("etag")).toBeNull();
+
+				// Video should not have ETag
+				const resVideo = await fetch(`http://localhost:${server.port}/video`);
+				expect(resVideo.headers.get("etag")).toBeNull();
+
+				// Audio should not have ETag
+				const resAudio = await fetch(`http://localhost:${server.port}/audio`);
+				expect(resAudio.headers.get("etag")).toBeNull();
+
+				// PDF should not have ETag
+				const resPdf = await fetch(`http://localhost:${server.port}/pdf`);
+				expect(resPdf.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should allow custom content type skip list", async () => {
+			app.use(
+				cache({
+					skipETagContentTypes: ["text/csv", "application/xml"],
+				})
+			);
+
+			app.get("/csv", (ctx) => {
+				return new Response("a,b,c\n1,2,3", {
+					headers: { "Content-Type": "text/csv" },
+				});
+			});
+			app.get("/xml", (ctx) => {
+				return new Response("<root></root>", {
+					headers: { "Content-Type": "application/xml" },
+				});
+			});
+			app.get("/json", (ctx) => ctx.json({ data: "test" }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// CSV should not have ETag
+				const resCsv = await fetch(`http://localhost:${server.port}/csv`);
+				expect(resCsv.headers.get("etag")).toBeNull();
+
+				// XML should not have ETag
+				const resXml = await fetch(`http://localhost:${server.port}/xml`);
+				expect(resXml.headers.get("etag")).toBeNull();
+
+				// JSON should still have ETag (not in skip list)
+				const resJson = await fetch(`http://localhost:${server.port}/json`);
+				expect(resJson.headers.get("etag")).toBeDefined();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should handle partial content type matches", async () => {
+			app.use(cache());
+
+			app.get("/image-jpeg", (ctx) => {
+				return new Response("fake-image", {
+					headers: { "Content-Type": "image/jpeg; charset=utf-8" },
+				});
+			});
+			app.get("/video-stream", (ctx) => {
+				return new Response("fake-video", {
+					headers: { "Content-Type": "video/mp4; codecs=avc1" },
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// Should match "image/" prefix
+				const resImage = await fetch(`http://localhost:${server.port}/image-jpeg`);
+				expect(resImage.headers.get("etag")).toBeNull();
+
+				// Should match "video/" prefix
+				const resVideo = await fetch(`http://localhost:${server.port}/video-stream`);
+				expect(resVideo.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
+	describe("shouldGenerateETag Function", () => {
+		test("should use custom shouldGenerateETag function", async () => {
+			app.use(
+				cache({
+					shouldGenerateETag: (ctx, res) => {
+						// Only generate ETag for /api routes
+						const url = new URL(ctx.req.url);
+						return url.pathname.startsWith("/api");
+					},
+				})
+			);
+
+			app.get("/api/data", (ctx) => ctx.json({ data: "api" }));
+			app.get("/public/data", (ctx) => ctx.json({ data: "public" }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				// API route should have ETag
+				const resApi = await fetch(`http://localhost:${server.port}/api/data`);
+				expect(resApi.headers.get("etag")).toBeDefined();
+
+				// Public route should not have ETag
+				const resPublic = await fetch(`http://localhost:${server.port}/public/data`);
+				expect(resPublic.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should not generate ETag for responses that already have one", async () => {
+			app.use(cache());
+
+			app.get("/with-etag", (ctx) => {
+				return new Response(JSON.stringify({ data: "test" }), {
+					headers: {
+						"Content-Type": "application/json",
+						ETag: '"existing-etag"',
+					},
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/with-etag`);
+				// Should keep existing ETag, not generate new one
+				expect(res.headers.get("etag")).toBe('"existing-etag"');
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should not generate ETag for chunked responses", async () => {
+			app.use(cache());
+
+			app.get("/chunked", (ctx) => {
+				return new Response("chunked data", {
+					headers: {
+						"Content-Type": "text/plain",
+						"Transfer-Encoding": "chunked",
+					},
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/chunked`);
+				expect(res.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
+	describe("ETag Performance", () => {
+		test("should not read body twice when ETag generation is disabled", async () => {
+			let bodyReadCount = 0;
+
+			app.use(cache({ generateETags: false }));
+			app.get("/test", (ctx) => {
+				const originalJson = ctx.json.bind(ctx);
+				// Override json to track body serialization
+				ctx.json = (data: any, status?: number) => {
+					bodyReadCount++;
+					return originalJson(data, status);
+				};
+				return ctx.json({ data: "test" });
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				await fetch(`http://localhost:${server.port}/test`);
+				// Body should only be read once (for the response)
+				expect(bodyReadCount).toBe(1);
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should handle streaming responses without buffering", async () => {
+			app.use(cache());
+
+			app.get("/stream", (ctx) => {
+				// Create a streaming response
+				const stream = new ReadableStream({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode("chunk1"));
+						controller.enqueue(new TextEncoder().encode("chunk2"));
+						controller.close();
+					},
+				});
+
+				return new Response(stream, {
+					headers: {
+						"Content-Type": "text/plain",
+						"Transfer-Encoding": "chunked",
+					},
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/stream`);
+				// Should not generate ETag for streaming
+				expect(res.headers.get("etag")).toBeNull();
+				// Should still receive the stream
+				const text = await res.text();
+				expect(text).toBe("chunk1chunk2");
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
+	describe("Edge Cases", () => {
+		test("should handle empty responses", async () => {
+			app.use(cache());
+
+			app.get("/empty", (ctx) => {
+				return new Response(null, {
+					status: 204,
+					headers: { "Content-Type": "application/json" },
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/empty`);
+				expect(res.status).toBe(204);
+				// Should generate ETag even for empty body
+				expect(res.headers.get("etag")).toBeDefined();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should handle responses without content-type", async () => {
+			app.use(cache());
+
+			app.get("/no-type", (ctx) => {
+				return new Response("data");
+				// No Content-Type header
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/no-type`);
+				// Should still generate ETag
+				expect(res.headers.get("etag")).toBeDefined();
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should handle case-insensitive content-type matching", async () => {
+			app.use(cache());
+
+			app.get("/mixed-case", (ctx) => {
+				return new Response("image data", {
+					headers: { "Content-Type": "IMAGE/PNG" }, // Uppercase
+				});
+			});
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${server.port}/mixed-case`);
+				// Should not generate ETag (matches image/ prefix)
+				expect(res.headers.get("etag")).toBeNull();
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
 	describe("Path Filtering", () => {
 		test("should exclude paths from caching", async () => {
 			app.use(

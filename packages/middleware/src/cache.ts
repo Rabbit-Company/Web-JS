@@ -88,6 +88,15 @@ type KeyGenerator = (ctx: Context<any>) => string;
 type ShouldCacheFunction = (ctx: Context<any>, res: Response) => boolean;
 
 /**
+ * Function signature for determining if ETag should be generated
+ * @callback ShouldGenerateETagFunction
+ * @param {Context<any>} ctx - The request context
+ * @param {Response} res - The response
+ * @returns {boolean} True if ETag should be generated
+ */
+type ShouldGenerateETagFunction = (ctx: Context<any>, res: Response) => boolean;
+
+/**
  * Cache middleware configuration options
  *
  * @interface CacheConfig
@@ -183,6 +192,30 @@ export interface CacheConfig {
 	 * @see getAvailableHashAlgorithms() for available algorithms
 	 */
 	hashAlgorithm?: string;
+
+	/**
+	 * Whether to generate ETags for responses
+	 * @default true
+	 */
+	generateETags?: boolean;
+
+	/**
+	 * Function to determine if ETag should be generated for a specific response
+	 * @default Smart function that skips large files and certain content types
+	 */
+	shouldGenerateETag?: ShouldGenerateETagFunction;
+
+	/**
+	 * Maximum body size for ETag generation (in bytes)
+	 * @default 1048576 (1MB)
+	 */
+	maxETagBodySize?: number;
+
+	/**
+	 * Content types to skip ETag generation for
+	 * @default ['image/', 'video/', 'audio/', 'application/octet-stream', 'application/zip', 'application/pdf']
+	 */
+	skipETagContentTypes?: string[];
 }
 
 /**
@@ -549,6 +582,51 @@ function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
 }
 
 /**
+ * Default function to determine if ETag should be generated
+ * @param {Context<any>} ctx - The request context
+ * @param {Response} res - The response
+ * @param {number} maxBodySize - Maximum body size for ETag generation
+ * @param {string[]} skipContentTypes - Content types to skip
+ * @returns {boolean} True if ETag should be generated
+ */
+function defaultShouldGenerateETag(ctx: Context<any>, res: Response, maxBodySize: number, skipContentTypes: string[]): boolean {
+	// Skip if already has ETag
+	if (res.headers.get("etag")) {
+		return false;
+	}
+
+	// Check content type
+	const contentType = res.headers.get("content-type")?.toLowerCase() || "";
+	for (const skipType of skipContentTypes) {
+		if (contentType.includes(skipType.toLowerCase())) {
+			return false;
+		}
+	}
+
+	// Check content length if available
+	const contentLength = res.headers.get("content-length");
+	if (contentLength) {
+		const size = parseInt(contentLength, 10);
+		if (!isNaN(size) && size > maxBodySize) {
+			return false;
+		}
+	}
+
+	// Check if it's a range request
+	if (res.status === 206 || ctx.req.headers.get("range")) {
+		return false;
+	}
+
+	// Check if response is streaming
+	const transferEncoding = res.headers.get("transfer-encoding");
+	if (transferEncoding && transferEncoding.includes("chunked")) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
  * Cache middleware factory
  *
  * Creates a caching middleware that stores and serves responses from cache
@@ -576,6 +654,22 @@ function matchesPath(path: string, patterns: (string | RegExp)[]): boolean {
  *   staleWhileRevalidate: true,
  *   maxStaleAge: 3600 // 1 hour
  * }));
+ *
+ * // Disable ETags for large files
+ * app.use(cache({
+ *   generateETags: true,
+ *   maxETagBodySize: 512 * 1024, // 512KB
+ *   skipETagContentTypes: ['image/', 'video/', 'audio/']
+ * }));
+ *
+ * // Custom ETag logic
+ * app.use(cache({
+ *   shouldGenerateETag: (ctx, res) => {
+ *     // Only generate ETags for JSON responses
+ *     const contentType = res.headers.get('content-type') || '';
+ *     return contentType.includes('application/json');
+ *   }
+ * }));
  * ```
  */
 export function cache<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
@@ -598,6 +692,10 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		staleWhileRevalidate: false,
 		maxStaleAge: 86400,
 		hashAlgorithm: "blake2b512",
+		generateETags: true,
+		shouldGenerateETag: (ctx: Context<any>, res: Response) => defaultShouldGenerateETag(ctx, res, options.maxETagBodySize, options.skipETagContentTypes),
+		maxETagBodySize: 1048576, // 1MB
+		skipETagContentTypes: ["image/", "video/", "audio/", "application/octet-stream", "application/zip", "application/pdf", "application/x-", "font/"],
 		...config,
 	};
 
@@ -635,11 +733,7 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 		const cloned = response.clone();
 		const body = await cloned.text();
 
-		// Generate ETag if not present
-		let etag = response.headers.get("etag");
-		if (!etag) {
-			etag = await generateETag(body, options.hashAlgorithm);
-		}
+		const etag = response.headers.get("etag") || undefined;
 
 		// Extract headers
 		const headers: Record<string, string> = {};
@@ -828,34 +922,39 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 				response.headers.set(options.cacheHeaderName, "MISS");
 			}
 
-			// Generate and set ETag if not present
-			if (options.shouldCache(ctx, response) && !response.headers.get("etag")) {
-				// Clone response to read body for ETag generation
-				const cloned = response.clone();
-				const body = await cloned.text();
-				const etag = await generateETag(body, options.hashAlgorithm);
-
-				// Create new response with ETag header
-				const headers = new Headers(response.headers);
-				headers.set("etag", etag);
-
-				// Store in background (don't block response)
-				const responseWithEtag = new Response(body, {
-					status: response.status,
-					statusText: response.statusText,
-					headers,
-				});
-
-				// Cache the response with ETag
-				storeCachedResponse(cacheKey, responseWithEtag).catch(() => {
-					// Ignore storage errors
-				});
-
-				return responseWithEtag;
-			}
-
-			// Cache the original response if it already has an ETag
+			// Check if we should cache this response
 			if (options.shouldCache(ctx, response)) {
+				// Check if we should generate ETag
+				if (options.generateETags && options.shouldGenerateETag && options.shouldGenerateETag(ctx, response)) {
+					// Clone response to read body for ETag generation
+					const cloned = response.clone();
+					const body = await cloned.text();
+
+					// Only generate ETag if body is within size limit
+					if (body.length <= options.maxETagBodySize) {
+						const etag = await generateETag(body, options.hashAlgorithm);
+
+						// Create new response with ETag header
+						const headers = new Headers(response.headers);
+						headers.set("etag", etag);
+
+						// Store in background (don't block response)
+						const responseWithEtag = new Response(body, {
+							status: response.status,
+							statusText: response.statusText,
+							headers,
+						});
+
+						// Cache the response with ETag
+						storeCachedResponse(cacheKey, responseWithEtag).catch(() => {
+							// Ignore storage errors
+						});
+
+						return responseWithEtag;
+					}
+				}
+
+				// Cache the original response without ETag generation
 				storeCachedResponse(cacheKey, response.clone()).catch(() => {
 					// Ignore storage errors
 				});

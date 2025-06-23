@@ -6,11 +6,7 @@ const app = new Web();
 
 app.use(cors());
 
-app.use(
-	cache({
-		//hashAlgorithm: "blake2b",
-	})
-);
+app.use(cache());
 
 app.get("/", async (ctx) => ctx.html(`<h1>Hello World from ${ctx.clientIp}</h1>`));
 
