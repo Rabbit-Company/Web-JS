@@ -1,5 +1,6 @@
 import type {
 	BunServerInstance,
+	BunWebSocketHandler,
 	Context,
 	DenoServerInstance,
 	ListenOptions,
@@ -116,6 +117,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	private routeMatchCache = new Map<string, { handlers?: Middleware<T, B>[]; params: Record<string, string> } | null>();
 	/** Counter for generating unique IDs */
 	private idCounter = 0;
+	/** WebSocket handler configuration for Bun runtime */
+	private bunWebSocket?: BunWebSocketHandler;
 
 	/** Trie roots for each HTTP method for fast route matching */
 	private roots: Record<Method, TrieNode<T, B>> = {
@@ -1627,6 +1630,17 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	async handleBun(req: Request, server: unknown): Promise<Response> {
 		// Extract client IP from Bun's server object
 		const clientIp = (server as any)?.requestIP?.(req)?.address;
+
+		// Check if this is a WebSocket upgrade request
+		if (this.bunWebSocket && req.headers.get("upgrade") === "websocket") {
+			// Try to upgrade to WebSocket
+			const bunServer = server as BunServerInstance;
+			if (bunServer.upgrade(req)) {
+				// Return empty response to indicate upgrade was handled
+				return new Response(null, { status: 101 });
+			}
+		}
+
 		return this.handleWithIp(req, clientIp);
 	}
 
@@ -1845,6 +1859,11 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				...bunOptions,
 			};
 
+			// Add WebSocket configuration if provided
+			if (this.bunWebSocket) {
+				serverConfig.websocket = this.bunWebSocket;
+			}
+
 			const bunServer = bunGlobal.Bun.serve(serverConfig) as BunServerInstance;
 
 			const server: Server = {
@@ -1992,6 +2011,45 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		} else {
 			throw new Error(`Unsupported runtime. This framework supports Bun, Deno, Node.js and Cloudflare Workers.`);
 		}
+	}
+
+	/**
+	 * Sets up WebSocket handlers for Bun runtime.
+	 * This method must be called before starting the server with listen().
+	 *
+	 * @param handlers - WebSocket handler configuration
+	 * @returns The Web instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * app.websocket({
+	 *   idleTimeout: 120,
+	 *   maxPayloadLength: 1024 * 1024,
+	 *   open(ws) {
+	 *     console.log('WebSocket connected');
+	 *     ws.subscribe('prices');
+	 *   },
+	 *   message(ws, message) {
+	 *     console.log('Received:', message);
+	 *   },
+	 *   close(ws) {
+	 *     ws.unsubscribe('prices');
+	 *   }
+	 * });
+	 *
+	 * // Then use in a route
+	 * app.get('/ws', (ctx) => {
+	 *   if (ctx.req.headers.get('upgrade') === 'websocket') {
+	 *     // The upgrade will be handled automatically by the framework
+	 *     return new Response(null, { status: 101 });
+	 *   }
+	 *   return ctx.text('WebSocket endpoint');
+	 * });
+	 * ```
+	 */
+	websocket(handlers: BunWebSocketHandler): this {
+		this.bunWebSocket = handlers;
+		return this;
 	}
 }
 

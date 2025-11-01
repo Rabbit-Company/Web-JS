@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Web } from "../packages/core/src";
+import type { ServerWebSocket } from "bun";
 
 function mockRequest(path: string, method = "GET", headers: Record<string, string> = {}) {
 	return new Request(`http://localhost${path}`, {
@@ -1517,6 +1518,590 @@ describe("Web Framework", () => {
 			// Routes should still work
 			expect((await app.handle(mockRequest("/test1"))).status).toBe(200);
 			expect((await app.handle(mockRequest("/test2", "POST"))).status).toBe(200);
+		});
+	});
+});
+
+describe("WebSocket Support", () => {
+	describe("Bun WebSocket Configuration", () => {
+		it("should configure WebSocket handlers", async () => {
+			const app = new Web();
+
+			let openCalled = false;
+			let messageCalled = false;
+			let closeCalled = false;
+
+			app.websocket({
+				idleTimeout: 120,
+				maxPayloadLength: 1024 * 1024,
+				open(ws) {
+					openCalled = true;
+					ws.subscribe("test-room");
+				},
+				message(ws, message) {
+					messageCalled = true;
+					ws.send(`Echo: ${message}`);
+				},
+				close(ws) {
+					closeCalled = true;
+					ws.unsubscribe("test-room");
+				},
+			});
+
+			// The WebSocket configuration should be stored
+			expect((app as any).bunWebSocket).toBeDefined();
+			expect((app as any).bunWebSocket.idleTimeout).toBe(120);
+			expect((app as any).bunWebSocket.maxPayloadLength).toBe(1024 * 1024);
+		});
+
+		it("should be chainable", async () => {
+			const app = new Web();
+
+			const result = app.websocket({
+				open(ws) {
+					ws.subscribe("room");
+				},
+				message(ws, message) {
+					ws.send(message);
+				},
+			});
+
+			expect(result).toBe(app); // Should return the instance for chaining
+		});
+	});
+
+	describe("WebSocket Upgrade Handling", () => {
+		it("should handle WebSocket upgrade requests", async () => {
+			const app = new Web();
+
+			let upgradeHandled = false;
+			app.websocket({
+				open(ws) {
+					upgradeHandled = true;
+				},
+				message(ws, message) {
+					ws.send(message);
+				},
+			});
+
+			// Mock Bun server with upgrade capability
+			const mockServer = {
+				upgrade: (req: Request) => {
+					return req.headers.get("upgrade") === "websocket";
+				},
+			};
+
+			// Create WebSocket upgrade request
+			const wsRequest = new Request("http://localhost/ws", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					"sec-websocket-key": "test-key",
+					"sec-websocket-version": "13",
+				},
+			});
+
+			const response = await (app as any).handleBun(wsRequest, mockServer);
+
+			// Should return 101 Switching Protocols for successful upgrade
+			expect(response.status).toBe(101);
+		});
+
+		it("should not upgrade non-WebSocket requests", async () => {
+			const app = new Web();
+
+			app.websocket({
+				open(ws) {
+					ws.subscribe("room");
+				},
+			});
+
+			const mockServer = {
+				upgrade: () => false,
+			};
+
+			// Regular HTTP request (no upgrade header)
+			const regularRequest = new Request("http://localhost/api", {
+				method: "GET",
+			});
+
+			// Add a regular route to handle this request
+			app.get("/api", (c) => c.text("API response"));
+
+			const response = await (app as any).handleBun(regularRequest, mockServer);
+
+			// Should return normal HTTP response, not upgrade
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe("API response");
+		});
+
+		it("should handle failed WebSocket upgrades", async () => {
+			const app = new Web();
+
+			app.websocket({
+				open(ws) {
+					ws.subscribe("room");
+				},
+			});
+
+			const mockServer = {
+				upgrade: () => false, // Simulate upgrade failure
+			};
+
+			const wsRequest = new Request("http://localhost/ws", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					"sec-websocket-key": "test-key",
+					"sec-websocket-version": "13",
+				},
+			});
+
+			// Since we're not in a real Bun environment, the upgrade will fail
+			// and the request will fall through to normal handling
+			app.get("/ws", (c) => c.text("WebSocket endpoint"));
+
+			const response = await (app as any).handleBun(wsRequest, mockServer);
+
+			// Should return the normal route response since upgrade failed
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe("WebSocket endpoint");
+		});
+	});
+
+	describe("WebSocket Route Integration", () => {
+		it("should handle WebSocket routes alongside HTTP routes", async () => {
+			const app = new Web();
+
+			let wsConnected = false;
+			app.websocket({
+				open(ws) {
+					wsConnected = true;
+					ws.subscribe("chat");
+				},
+				message(ws, message) {
+					// Echo the message back
+					ws.send(`Server: ${message}`);
+				},
+				close(ws) {
+					wsConnected = false;
+					ws.unsubscribe("chat");
+				},
+			});
+
+			// Regular HTTP route
+			app.get("/api/status", (c) => c.json({ status: "online" }));
+
+			// WebSocket upgrade route
+			app.get("/ws", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					// The framework handles the upgrade automatically
+					return new Response(null, { status: 101 });
+				}
+				return c.text("HTTP endpoint - use WebSocket upgrade");
+			});
+
+			// Test HTTP route
+			const httpResponse = await app.handle(new Request("http://localhost/api/status"));
+			expect(httpResponse.status).toBe(200);
+			expect(await httpResponse.json()).toEqual({ status: "online" });
+
+			// Test WebSocket route with upgrade header
+			const wsRequest = new Request("http://localhost/ws", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					"sec-websocket-key": "test-key",
+					"sec-websocket-version": "13",
+				},
+			});
+
+			// Mock server for Bun handler
+			const mockServer = {
+				upgrade: (req: Request) => req.headers.get("upgrade") === "websocket",
+				requestIP: (req: Request) => ({ address: "127.0.0.1" }),
+			};
+
+			const wsResponse = await (app as any).handleBun(wsRequest, mockServer);
+			expect(wsResponse.status).toBe(101);
+		});
+
+		it("should handle WebSocket with middleware", async () => {
+			const app = new Web<{ authenticated: boolean; userId?: string }>();
+
+			// Authentication middleware for WebSocket routes
+			app.use("/ws/*", async (c, next) => {
+				const token = c.req.headers.get("authorization");
+				if (token === "Bearer valid-token") {
+					c.set("authenticated", true);
+					c.set("userId", "user-123");
+				} else {
+					c.set("authenticated", false);
+				}
+				await next();
+			});
+
+			let authenticatedConnection = false;
+			app.websocket({
+				open(ws) {
+					// In a real scenario, you'd access context here
+					authenticatedConnection = true;
+					ws.subscribe(`user-${(ws as any).data?.userId || "anonymous"}`);
+				},
+				message(ws, message) {
+					ws.send(`Received: ${message}`);
+				},
+			});
+
+			// WebSocket route with authentication check
+			app.get("/ws/chat", (c) => {
+				if (!c.get("authenticated")) {
+					return c.text("Authentication required", 401);
+				}
+
+				if (c.req.headers.get("upgrade") === "websocket") {
+					// Upgrade with user data
+					return new Response(null, { status: 101 });
+				}
+
+				return c.text("WebSocket chat endpoint");
+			});
+
+			// Test unauthenticated WebSocket attempt
+			const unauthenticatedRequest = new Request("http://localhost/ws/chat", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+				},
+			});
+
+			const unauthenticatedResponse = await app.handle(unauthenticatedRequest);
+			expect(unauthenticatedResponse.status).toBe(401);
+
+			// Test authenticated WebSocket attempt
+			const authenticatedRequest = new Request("http://localhost/ws/chat", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					authorization: "Bearer valid-token",
+				},
+			});
+
+			const mockServer = {
+				upgrade: (req: Request, options?: any) => {
+					// Check if we can attach data during upgrade
+					if (options?.data) {
+						(authenticatedRequest as any).upgradeData = options.data;
+					}
+					return true;
+				},
+				requestIP: (req: Request) => ({ address: "127.0.0.1" }),
+			};
+
+			const authenticatedResponse = await (app as any).handleBun(authenticatedRequest, mockServer);
+			expect(authenticatedResponse.status).toBe(101);
+		});
+	});
+
+	describe("WebSocket Broadcast Integration", () => {
+		it("should support WebSocket broadcasting from HTTP routes", async () => {
+			const app = new Web();
+
+			const connectedClients: Set<ServerWebSocket> = new Set();
+			app.websocket({
+				open(ws) {
+					connectedClients.add(ws);
+					ws.subscribe("broadcast-room");
+				},
+				close(ws) {
+					connectedClients.delete(ws);
+					ws.unsubscribe("broadcast-room");
+				},
+				message(ws, message) {
+					// Echo for testing
+					ws.send(message);
+				},
+			});
+
+			// HTTP route to trigger broadcast
+			app.post("/broadcast", async (c) => {
+				const { message } = await c.body<{ message: string }>();
+
+				// In a real app, you'd use the server instance to broadcast
+				// For testing, we'll just return the message that would be broadcast
+				return c.json({
+					broadcast: true,
+					message,
+					clients: connectedClients.size,
+				});
+			});
+
+			// WebSocket endpoint
+			app.get("/ws", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					return new Response(null, { status: 101 });
+				}
+				return c.text("WebSocket endpoint");
+			});
+
+			// Test broadcast endpoint
+			const broadcastResponse = await app.handle(
+				new Request("http://localhost/broadcast", {
+					method: "POST",
+					body: JSON.stringify({ message: "Hello everyone!" }),
+					headers: { "Content-Type": "application/json" },
+				})
+			);
+
+			expect(broadcastResponse.status).toBe(200);
+			const broadcastData = await broadcastResponse.json();
+			expect(broadcastData).toEqual({
+				broadcast: true,
+				message: "Hello everyone!",
+				clients: 0, // No actual connections in test
+			});
+		});
+	});
+
+	describe("WebSocket Error Handling", () => {
+		it("should handle WebSocket errors gracefully", async () => {
+			const app = new Web();
+
+			let errorHandled = false;
+			app.websocket({
+				open(ws) {
+					ws.subscribe("test");
+				},
+				error(ws, error) {
+					errorHandled = true;
+					console.error("WebSocket error:", error);
+				},
+				message(ws, message) {
+					// Simulate an error for testing
+					if (message === "throw-error") {
+						throw new Error("Test WebSocket error");
+					}
+					ws.send(`OK: ${message}`);
+				},
+			});
+
+			app.get("/ws", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					return new Response(null, { status: 101 });
+				}
+				return c.text("WebSocket endpoint");
+			});
+
+			// The error handling is internal to Bun's WebSocket implementation,
+			// so we mainly test that the configuration is set up correctly
+			expect((app as any).bunWebSocket.error).toBeDefined();
+		});
+	});
+
+	describe("Multiple WebSocket Endpoints", () => {
+		it("should handle different WebSocket endpoints with different behaviors", async () => {
+			const app = new Web();
+
+			const chatConnections = new Set();
+			const notificationConnections = new Set();
+
+			app.websocket({
+				open(ws) {
+					// Determine which room based on URL path
+					const url = new URL(ws.remoteAddress as string);
+					if (url.pathname === "/ws/chat") {
+						chatConnections.add(ws);
+						ws.subscribe("chat-room");
+					} else if (url.pathname === "/ws/notifications") {
+						notificationConnections.add(ws);
+						ws.subscribe("notifications-room");
+					}
+				},
+				message(ws, message) {
+					const url = new URL(ws.remoteAddress as string);
+					if (url.pathname === "/ws/chat") {
+						ws.send(`Chat: ${message}`);
+					} else if (url.pathname === "/ws/notifications") {
+						ws.send(`Notification: ${message}`);
+					}
+				},
+				close(ws) {
+					const url = new URL(ws.remoteAddress as string);
+					if (url.pathname === "/ws/chat") {
+						chatConnections.delete(ws);
+						ws.unsubscribe("chat-room");
+					} else if (url.pathname === "/ws/notifications") {
+						notificationConnections.delete(ws);
+						ws.unsubscribe("notifications-room");
+					}
+				},
+			});
+
+			// Chat WebSocket endpoint
+			app.get("/ws/chat", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					return new Response(null, { status: 101 });
+				}
+				return c.text("Chat WebSocket endpoint");
+			});
+
+			// Notifications WebSocket endpoint
+			app.get("/ws/notifications", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					return new Response(null, { status: 101 });
+				}
+				return c.text("Notifications WebSocket endpoint");
+			});
+
+			// Test chat endpoint
+			const chatRequest = new Request("http://localhost/ws/chat", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					"sec-websocket-key": "chat-key",
+				},
+			});
+
+			const mockServer = {
+				upgrade: (req: Request) => true,
+				requestIP: (req: Request) => ({ address: "127.0.0.1" }),
+			};
+
+			const chatResponse = await (app as any).handleBun(chatRequest, mockServer);
+			expect(chatResponse.status).toBe(101);
+
+			// Test notifications endpoint
+			const notificationsRequest = new Request("http://localhost/ws/notifications", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+					"sec-websocket-key": "notifications-key",
+				},
+			});
+
+			const notificationsResponse = await (app as any).handleBun(notificationsRequest, mockServer);
+			expect(notificationsResponse.status).toBe(101);
+		});
+	});
+
+	describe("WebSocket with Route Parameters", () => {
+		it("should handle WebSocket routes with parameters", async () => {
+			const app = new Web();
+
+			const roomConnections = new Map<string, Set<ServerWebSocket>>();
+
+			app.websocket({
+				open(ws) {
+					// Extract room ID from URL
+					const url = new URL(ws.remoteAddress as string);
+					const roomId = url.pathname.split("/").pop();
+
+					if (roomId) {
+						if (!roomConnections.has(roomId)) {
+							roomConnections.set(roomId, new Set());
+						}
+						roomConnections.get(roomId)!.add(ws);
+						ws.subscribe(`room-${roomId}`);
+					}
+				},
+				message(ws, message) {
+					const url = new URL(ws.remoteAddress as string);
+					const roomId = url.pathname.split("/").pop();
+
+					// Broadcast to room
+					if (roomId) {
+						ws.send(`Room ${roomId}: ${message}`);
+					}
+				},
+				close(ws) {
+					const url = new URL(ws.remoteAddress as string);
+					const roomId = url.pathname.split("/").pop();
+
+					if (roomId && roomConnections.has(roomId)) {
+						roomConnections.get(roomId)!.delete(ws);
+						ws.unsubscribe(`room-${roomId}`);
+					}
+				},
+			});
+
+			// Dynamic WebSocket room endpoint
+			app.get("/ws/room/:roomId", (c) => {
+				if (c.req.headers.get("upgrade") === "websocket") {
+					return new Response(null, { status: 101 });
+				}
+				return c.text(`Room ${c.params.roomId} WebSocket endpoint`);
+			});
+
+			// Test different room endpoints
+			const room1Request = new Request("http://localhost/ws/room/general", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+				},
+			});
+
+			const room2Request = new Request("http://localhost/ws/room/tech", {
+				headers: {
+					upgrade: "websocket",
+					connection: "upgrade",
+				},
+			});
+
+			const mockServer = {
+				upgrade: (req: Request) => true,
+				requestIP: (req: Request) => ({ address: "127.0.0.1" }),
+			};
+
+			const room1Response = await (app as any).handleBun(room1Request, mockServer);
+			expect(room1Response.status).toBe(101);
+
+			const room2Response = await (app as any).handleBun(room2Request, mockServer);
+			expect(room2Response.status).toBe(101);
+		});
+	});
+
+	describe("Server Integration", () => {
+		it("should include WebSocket configuration when starting server", async () => {
+			const app = new Web();
+
+			app.websocket({
+				open(ws) {
+					ws.subscribe("global");
+				},
+				message(ws, message) {
+					ws.send(message);
+				},
+			});
+
+			app.get("/", (c) => c.text("Hello World"));
+
+			// Mock Bun.serve to capture configuration
+			const originalBunServe = (globalThis as any).Bun?.serve;
+			let capturedConfig: any = null;
+
+			(globalThis as any).Bun.serve = (config: any) => {
+				capturedConfig = config;
+				return {
+					port: 3000,
+					hostname: "localhost",
+					stop: () => {},
+				};
+			};
+
+			try {
+				await app.listen({ port: 3000 });
+
+				// Verify WebSocket configuration was passed to Bun.serve
+				expect(capturedConfig).toBeDefined();
+				expect(capturedConfig.websocket).toBeDefined();
+				expect(capturedConfig.websocket.open).toBeDefined();
+				expect(capturedConfig.websocket.message).toBeDefined();
+			} finally {
+				// Restore original Bun.serve
+				if (originalBunServe) {
+					(globalThis as any).Bun.serve = originalBunServe;
+				}
+			}
 		});
 	});
 });

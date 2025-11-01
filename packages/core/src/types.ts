@@ -1,3 +1,5 @@
+import type { ServerWebSocket } from "bun";
+
 /**
  * Middleware function type that processes requests and can return responses.
  * Middleware functions receive a context object and a next function to call the next middleware in the chain.
@@ -421,7 +423,7 @@ export interface BunServerOptions {
 	 */
 	maxRequestBodySize?: number;
 	/** WebSocket handler configuration */
-	websocket?: unknown;
+	websocket?: BunWebSocketHandler;
 	/** Server name for the Server header */
 	serverName?: string;
 	/** Enable HTTP/2 support */
@@ -505,4 +507,36 @@ export interface BunServerInstance {
 	port: number;
 	hostname?: string;
 	stop(): void;
+	/** Upgrade a request to a WebSocket connection */
+	upgrade(
+		req: Request,
+		options?: {
+			data?: any;
+			headers?: HeadersInit;
+		}
+	): boolean;
+}
+
+/**
+ * WebSocket handler configuration for Bun runtime
+ */
+export interface BunWebSocketHandler {
+	/** Maximum allowed message size in bytes */
+	maxPayloadLength?: number;
+	/** Maximum time in seconds the WebSocket can be idle before being closed */
+	idleTimeout?: number;
+	/** Handler for when a connection is opened */
+	open?(ws: ServerWebSocket): void | Promise<void>;
+	/** Handler for when a message is received */
+	message?(ws: ServerWebSocket, message: string | Buffer): void | Promise<void>;
+	/** Handler for when a connection is closed */
+	close?(ws: ServerWebSocket, code?: number, reason?: string): void | Promise<void>;
+	/** Handler for when a connection encounters an error */
+	error?(ws: ServerWebSocket, error: Error): void | Promise<void>;
+	/** Handler for when the connection is drained (backpressure is relieved) */
+	drain?(ws: ServerWebSocket): void | Promise<void>;
+	/** Handler for ping frames */
+	ping?(ws: ServerWebSocket, data: Buffer): void | Promise<void>;
+	/** Handler for pong frames */
+	pong?(ws: ServerWebSocket, data: Buffer): void | Promise<void>;
 }

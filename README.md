@@ -15,6 +15,7 @@ A high-performance web framework built for **Bun**, **Deno**, **NodeJS** and **C
 - 🧭 **Route scoping** for modular apps
 - 🧵 **Async/await** ready
 - 🛡 **Error handling** built-in
+- 🔌 **WebSocket support** with automatic upgrades
 
 ## 📦 Installation
 
@@ -30,6 +31,8 @@ pnpm add @rabbit-company/web
 ```
 
 ## 🎯 Quick Start
+
+### Basic HTTP Server
 
 ```js
 import { Web } from '@rabbit-company/web';
@@ -61,6 +64,58 @@ export default {
 console.log('Server running at http://localhost:3000');
 ```
 
+### WebSocket Server
+
+```js
+import { Web } from "@rabbit-company/web";
+
+const app = new Web();
+
+// Configure WebSocket handlers
+app.websocket({
+	idleTimeout: 120,
+	maxPayloadLength: 1024 * 1024, // 1 MB
+	open(ws) {
+		console.log("WebSocket connected");
+		ws.subscribe("chat-room");
+	},
+	message(ws, message) {
+		console.log("Received:", message);
+		// Echo message back
+		ws.send(`Echo: ${message}`);
+		// Broadcast to room
+		ws.publish("chat-room", `User: ${message}`);
+	},
+	close(ws) {
+		console.log("WebSocket disconnected");
+		ws.unsubscribe("chat-room");
+	},
+});
+
+// WebSocket upgrade route
+app.get("/ws", (ctx) => {
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		// Framework automatically handles upgrade
+		return new Response(null, { status: 101 });
+	}
+	return ctx.text("Use WebSocket protocol to connect");
+});
+
+// HTTP route that broadcasts to WebSocket clients
+app.post("/broadcast", async (ctx) => {
+	const { message } = await ctx.body();
+
+	// In a real app, you'd access the server instance
+	// server.publish("chat-room", message);
+
+	return ctx.json({ success: true, message: "Broadcast sent" });
+});
+
+// Start server with WebSocket support
+const server = await app.listen({ port: 3000 });
+console.log("Server with WebSocket support running at http://localhost:3000");
+```
+
 ## 📚 Documentation
 
 ### 🛣 Routing
@@ -83,6 +138,64 @@ app.get("/files/*", (ctx) => {
 const routeId = app.addRoute("GET", "/temp", handler);
 // Remove later
 app.removeRoute(routeId);
+```
+
+### 🔌 WebSocket Support
+
+```js
+// Configure WebSocket handlers
+app.websocket({
+	// Maximum time in seconds WebSocket can be idle
+	idleTimeout: 120,
+
+	// Maximum message size in bytes
+	maxPayloadLength: 1024 * 1024,
+
+	// Called when connection is established
+	open(ws) {
+		console.log("Client connected");
+		ws.subscribe("notifications");
+	},
+
+	// Called when message is received
+	message(ws, message) {
+		console.log("Received:", message);
+		ws.send(`You said: ${message}`);
+	},
+
+	// Called when connection is closed
+	close(ws) {
+		console.log("Client disconnected");
+		ws.unsubscribe("notifications");
+	},
+
+	// Called on connection error
+	error(ws, error) {
+		console.error("WebSocket error:", error);
+	},
+
+	// Called when backpressure is relieved
+	drain(ws) {
+		console.log("WebSocket drained");
+	},
+});
+
+// WebSocket upgrade route
+app.get("/chat", (ctx) => {
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		// Framework handles upgrade automatically
+		return new Response(null, { status: 101 });
+	}
+	return ctx.text("WebSocket endpoint - upgrade required");
+});
+
+// Dynamic WebSocket rooms
+app.get("/room/:roomId", (ctx) => {
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		return new Response(null, { status: 101 });
+	}
+	return ctx.text(`Join room ${ctx.params.roomId} via WebSocket`);
+});
 ```
 
 ### 🔄 Dynamic Route Management
@@ -242,6 +355,12 @@ app.get("/danger", async (ctx) => {
 - `removeRoute(id)` - Remove route by ID
 - `removeRoutesBy(criteria)` - Remove routes by method/path
 - `getRoutes()` - List all routes with metadata
+
+#### WebSocket Management
+
+- `websocket(handlers)` - Configure WebSocket handlers (chainable)
+- WebSocket handlers: `open`, `message`, `close`, `error`, `drain`, `ping`, `pong`
+- Automatic upgrade handling for WebSocket requests
 
 #### Middleware Management
 

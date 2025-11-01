@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web, type Context } from "@rabbit-company/web";
+import { Web, type Context } from "../../packages/core/src";
 import { ipRestriction, ipRestrictionPresets, createDynamicIpRestriction } from "../../packages/middleware/src/ip-restriction";
 
 describe("IP Restriction Middleware", () => {

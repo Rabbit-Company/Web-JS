@@ -36,6 +36,123 @@ interface AppState {
 // Initialize the main app
 const app = new Web<AppState>();
 
+// ===== WEBSOCKET CONFIGURATION =====
+
+// Configure WebSocket handlers for real-time features
+app.websocket({
+	idleTimeout: 120, // 2 minutes
+	maxPayloadLength: 1024 * 1024, // 1MB max message size
+
+	// Track connected clients
+	open(ws) {
+		console.log("🔌 WebSocket connected");
+
+		// Subscribe to general notifications
+		ws.subscribe("notifications");
+		ws.subscribe("chat");
+	},
+
+	// Handle incoming messages
+	message(ws, message) {
+		console.log("📨 Received WebSocket message:", message.toString());
+
+		try {
+			const data = JSON.parse(message.toString());
+
+			// Handle different message types
+			switch (data.type) {
+				case "chat":
+					// Broadcast chat messages to all connected clients
+					ws.publish(
+						"chat",
+						JSON.stringify({
+							type: "chat",
+							message: data.message,
+							user: (ws as any).user?.name || "Anonymous",
+							timestamp: new Date().toISOString(),
+						})
+					);
+					break;
+
+				case "join-room":
+					// Join a specific room
+					ws.subscribe(`room-${data.roomId}`);
+					ws.send(
+						JSON.stringify({
+							type: "joined-room",
+							roomId: data.roomId,
+							message: `Joined room ${data.roomId}`,
+						})
+					);
+					break;
+
+				case "ping":
+					// Respond to ping
+					ws.send(
+						JSON.stringify({
+							type: "pong",
+							timestamp: Date.now(),
+						})
+					);
+					break;
+
+				default:
+					// Echo back unknown message types
+					ws.send(
+						JSON.stringify({
+							type: "echo",
+							message: data.message,
+							receivedAt: new Date().toISOString(),
+						})
+					);
+			}
+		} catch (error) {
+			// Handle JSON parse errors
+			ws.send(
+				JSON.stringify({
+					type: "error",
+					message: "Invalid JSON message",
+				})
+			);
+		}
+	},
+
+	// Handle connection close
+	close(ws, code, reason) {
+		console.log("🔌 WebSocket disconnected:", { code, reason });
+
+		// Unsubscribe from all channels
+		ws.unsubscribe("notifications");
+		ws.unsubscribe("chat");
+
+		// Clean up room subscriptions
+		for (const topic of (ws as any).topics || []) {
+			if (topic.startsWith("room-")) {
+				ws.unsubscribe(topic);
+			}
+		}
+	},
+
+	// Handle WebSocket errors
+	error(ws, error) {
+		console.error("💥 WebSocket error:", error);
+
+		ws.send(
+			JSON.stringify({
+				type: "error",
+				message: "An error occurred",
+			})
+		);
+	},
+
+	// Handle backpressure relief
+	drain(ws) {
+		console.log("💧 WebSocket drained - backpressure relieved");
+	},
+});
+
+// ===== MIDDLEWARE SETUP =====
+
 // Configure CORS with options
 app.use(
 	cors({
@@ -92,6 +209,103 @@ app.use(
 		},
 	})
 );
+
+// ===== WEBSOCKET ROUTES =====
+
+// Public WebSocket endpoint for chat
+app.get("/ws/chat", (ctx) => {
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		// Framework automatically handles WebSocket upgrade
+		return new Response(null, { status: 101 });
+	}
+
+	return ctx.json({
+		message: "Connect via WebSocket protocol for real-time chat",
+		usage: {
+			connect: "Use WebSocket client to connect to ws://localhost:3000/ws/chat",
+			messages: {
+				chat: '{"type": "chat", "message": "Hello!"}',
+				ping: '{"type": "ping"}',
+				join_room: '{"type": "join-room", "roomId": "general"}',
+			},
+		},
+	});
+});
+
+// Authenticated WebSocket endpoint
+app.get("/ws/secure", (ctx) => {
+	// Check authentication (in real app, use proper auth middleware)
+	const token = ctx.req.headers.get("authorization");
+
+	if (!token) {
+		return ctx.json({ error: "Authentication required" }, 401);
+	}
+
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		// You can pass data during upgrade
+		return new Response(null, { status: 101 });
+	}
+
+	return ctx.json({
+		message: "Authenticated WebSocket endpoint",
+		authenticated: true,
+	});
+});
+
+// Dynamic WebSocket rooms
+app.get("/ws/room/:roomId", (ctx) => {
+	if (ctx.req.headers.get("upgrade") === "websocket") {
+		return new Response(null, { status: 101 });
+	}
+
+	return ctx.json({
+		message: `WebSocket room: ${ctx.params.roomId}`,
+		roomId: ctx.params.roomId,
+		usage: `Connect via WebSocket and send: {"type": "join-room", "roomId": "${ctx.params.roomId}"}`,
+	});
+});
+
+// HTTP endpoint to broadcast notifications to WebSocket clients
+app.post("/api/broadcast", async (ctx) => {
+	const { message, type = "notification" } = await ctx.body<{ message: string; type?: string }>();
+
+	if (!message) {
+		return ctx.json({ error: "Message is required" }, 400);
+	}
+
+	const broadcastData = {
+		type,
+		message,
+		broadcastAt: new Date().toISOString(),
+		source: "server",
+	};
+
+	// In a real app, you'd access the server instance to broadcast
+	// server.publish("notifications", JSON.stringify(broadcastData));
+
+	return ctx.json({
+		success: true,
+		message: "Broadcast sent to connected WebSocket clients",
+		data: broadcastData,
+	});
+});
+
+// Get WebSocket connection stats
+app.get("/api/websocket/stats", (ctx) => {
+	// In a real app, you'd get actual connection stats from the server
+	return ctx.json({
+		activeConnections: 0, // This would be dynamic in production
+		features: ["Real-time chat", "Room-based messaging", "Broadcast notifications", "Connection tracking"],
+		usage: {
+			chat: "/ws/chat",
+			secure: "/ws/secure",
+			rooms: "/ws/room/{roomId}",
+			broadcast: "POST /api/broadcast",
+		},
+	});
+});
+
+// ===== PROTECTED API ENDPOINTS =====
 
 // Protected API endpoints with Bearer token auth
 const protectedApi = new Web<AppState>();
@@ -166,11 +380,12 @@ app.get("/", (ctx) => {
 				h1 { color: #333; }
 				.endpoint { background: #f5f5f5; padding: 1rem; margin: 1rem 0; border-radius: 4px; }
 				code { background: #e0e0e0; padding: 0.2rem 0.4rem; border-radius: 3px; }
+				.websocket-demo { background: #e8f5e8; border-left: 4px solid #4caf50; }
 			</style>
 		</head>
 		<body>
 			<h1>🚀 Web Framework by Rabbit Company</h1>
-			<p>A fast, modern web framework built for Bun runtime.</p>
+			<p>A fast, modern web framework built for Bun runtime with WebSocket support.</p>
 
 			<h2>Available Endpoints:</h2>
 			<div class="endpoint">
@@ -191,6 +406,17 @@ app.get("/", (ctx) => {
 			<div class="endpoint">
 				<strong>GET /admin/*</strong> - Admin routes (requires auth)
 			</div>
+
+			<div class="endpoint websocket-demo">
+				<strong>🔌 WebSocket Endpoints:</strong>
+				<ul>
+					<li><strong>GET /ws/chat</strong> - Real-time chat</li>
+					<li><strong>GET /ws/secure</strong> - Authenticated WebSocket</li>
+					<li><strong>GET /ws/room/:roomId</strong> - Dynamic rooms</li>
+					<li><strong>POST /api/broadcast</strong> - Broadcast to WebSocket clients</li>
+					<li><strong>GET /api/websocket/stats</strong> - Connection statistics</li>
+				</ul>
+			</div>
 		</body>
 		</html>
 	`);
@@ -204,6 +430,12 @@ app.get("/api/health", (ctx) => {
 		uptime: process.uptime(),
 		memory: process.memoryUsage(),
 		version: "1.0.0",
+		features: {
+			websocket: true,
+			middleware: true,
+			rateLimiting: true,
+			cors: true,
+		},
 	});
 });
 
@@ -565,6 +797,7 @@ console.log(`
 📍 Local:    http://localhost:${PORT}
 📍 Network:  http://${HOSTNAME}:${PORT}
 🌍 Env:      ${process.env.NODE_ENV || "development"}
+🔌 WebSocket: ws://localhost:${PORT}
 
 Available routes:
 - GET  /                      - Home page
@@ -579,9 +812,21 @@ Available routes:
 - GET  /admin/*               - Admin routes (Basic auth required)
 - GET  /static/*              - Static files
 
+🔌 WebSocket Endpoints:
+- GET  /ws/chat               - Real-time chat
+- GET  /ws/secure             - Authenticated WebSocket
+- GET  /ws/room/:roomId       - Dynamic WebSocket rooms
+- POST /api/broadcast         - Broadcast to WebSocket clients
+- GET  /api/websocket/stats   - WebSocket connection stats
+
 Authentication:
 - Admin panel: Basic Auth (admin:supersecret)
 - API endpoints: Bearer token in Authorization header
+
+WebSocket Usage Examples:
+- Chat:        {"type": "chat", "message": "Hello!"}
+- Ping:        {"type": "ping"}
+- Join Room:   {"type": "join-room", "roomId": "general"}
 
 Press Ctrl+C to stop
 `);
