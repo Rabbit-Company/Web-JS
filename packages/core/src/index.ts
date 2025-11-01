@@ -1871,6 +1871,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				hostname: bunServer.hostname || hostname,
 				runtime: "bun",
 				instance: bunServer,
+
+				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+					return bunServer.publish(topic, data, compress);
+				},
+
+				get pendingRequests(): number {
+					return bunServer.pendingRequests;
+				},
+
+				get pendingWebSockets(): number {
+					return bunServer.pendingWebSockets;
+				},
+
+				subscriberCount: (topic: string): number => {
+					return bunServer.subscriberCount(topic);
+				},
+
 				stop: async (): Promise<void> => {
 					bunServer.stop();
 				},
@@ -1905,6 +1922,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				hostname,
 				runtime: "deno",
 				instance: denoServer,
+
+				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+					return 0;
+				},
+
+				get pendingRequests(): number {
+					return 0;
+				},
+
+				get pendingWebSockets(): number {
+					return 0;
+				},
+
+				subscriberCount: (topic: string): number => {
+					return 0;
+				},
+
 				stop: async (): Promise<void> => {
 					await denoServer.shutdown();
 				},
@@ -1925,6 +1959,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				hostname,
 				runtime: "cloudflare-workers",
 				instance: null as any, // No actual server instance in Workers
+
+				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+					return 0;
+				},
+
+				get pendingRequests(): number {
+					return 0;
+				},
+
+				get pendingWebSockets(): number {
+					return 0;
+				},
+
+				subscriberCount: (topic: string): number => {
+					return 0;
+				},
+
 				stop: async (): Promise<void> => {
 					// Not for Cloudflare Workers
 				},
@@ -1986,6 +2037,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				hostname,
 				runtime: "node",
 				instance: nodeServer,
+
+				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+					return 0;
+				},
+
+				get pendingRequests(): number {
+					return 0;
+				},
+
+				get pendingWebSockets(): number {
+					return 0;
+				},
+
+				subscriberCount: (topic: string): number => {
+					return 0;
+				},
+
 				stop: async (): Promise<void> => {
 					return new Promise<void>((resolve, reject) => {
 						nodeServer.close((err?: Error) => {

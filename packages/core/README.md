@@ -105,8 +105,7 @@ app.get("/ws", (ctx) => {
 app.post("/broadcast", async (ctx) => {
 	const { message } = await ctx.body();
 
-	// In a real app, you'd access the server instance
-	// server.publish("chat-room", message);
+	server.publish("chat-room", message);
 
 	return ctx.json({ success: true, message: "Broadcast sent" });
 });

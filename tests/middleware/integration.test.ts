@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { Web } from "../../packages/core";
+import { Web } from "../../packages/core/src";
 import { cors } from "../../packages/middleware/src/cors";
 import { basicAuth } from "../../packages/middleware/src/basic-auth";
 import { rateLimit } from "../../packages/middleware/src/rate-limit";

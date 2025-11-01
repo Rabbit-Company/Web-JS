@@ -355,6 +355,18 @@ export interface Server {
 	stop(): Promise<void>;
 	/** The underlying runtime-specific server instance */
 	instance: unknown;
+
+	/** Publish data to all subscribers of a topic (Bun only) */
+	publish(topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
+
+	/** Get number of pending HTTP requests (Bun only) */
+	readonly pendingRequests: number;
+
+	/** Get number of active WebSocket connections (Bun only) */
+	readonly pendingWebSockets: number;
+
+	/** Get number of subscribers for a topic (Bun only) */
+	subscriberCount(topic: string): number;
 }
 
 /**
@@ -515,6 +527,18 @@ export interface BunServerInstance {
 			headers?: HeadersInit;
 		}
 	): boolean;
+
+	/** Publish data to all subscribers of a topic */
+	publish(topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
+
+	/** Get number of active WebSocket connections */
+	readonly pendingWebSockets: number;
+
+	/** Get number of pending HTTP requests */
+	readonly pendingRequests: number;
+
+	/** Get number of subscribers for a topic */
+	subscriberCount(topic: string): number;
 }
 
 /**
