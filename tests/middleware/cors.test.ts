@@ -9,14 +9,41 @@ describe("CORS Middleware", () => {
 		app = new Web();
 	});
 
-	it("should set wildcard origin when no origin specified", async () => {
+	it("should NOT set CORS headers when no Origin header is present", async () => {
 		app.use(cors());
 		app.get("/", (ctx) => ctx.text("OK"));
 
 		const req = new Request("http://localhost/");
 		const res = await app.handle(req);
 
+		expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+	});
+
+	it("should set wildcard origin when Origin is present and credentials are disabled", async () => {
+		app.use(cors());
+		app.get("/", (ctx) => ctx.text("OK"));
+
+		const req = new Request("http://localhost/", {
+			headers: { Origin: "https://example.com" },
+		});
+		const res = await app.handle(req);
+
 		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+		expect(res.headers.get("Vary")).toBeNull();
+	});
+
+	it("should reflect origin and set Vary when credentials are enabled", async () => {
+		app.use(cors({ credentials: true }));
+		app.get("/", (ctx) => ctx.text("OK"));
+
+		const req = new Request("http://localhost/", {
+			headers: { Origin: "https://example.com" },
+		});
+		const res = await app.handle(req);
+
+		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://example.com");
+		expect(res.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+		expect(res.headers.get("Vary")).toBe("Origin");
 	});
 
 	it("should set specific origin when provided", async () => {
@@ -29,6 +56,7 @@ describe("CORS Middleware", () => {
 		const res = await app.handle(req);
 
 		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://example.com");
+		expect(res.headers.get("Vary")).toBe("Origin");
 	});
 
 	it("should not set origin header for disallowed origin", async () => {
@@ -47,28 +75,24 @@ describe("CORS Middleware", () => {
 		app.use(
 			cors({
 				origin: ["https://example.com", "https://app.example.com"],
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req1 = new Request("http://localhost/", {
-			headers: { Origin: "https://example.com" },
-		});
-		const res1 = await app.handle(req1);
-		expect(res1.headers.get("Access-Control-Allow-Origin")).toBe("https://example.com");
-
-		const req2 = new Request("http://localhost/", {
+		const req = new Request("http://localhost/", {
 			headers: { Origin: "https://app.example.com" },
 		});
-		const res2 = await app.handle(req2);
-		expect(res2.headers.get("Access-Control-Allow-Origin")).toBe("https://app.example.com");
+		const res = await app.handle(req);
+
+		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://app.example.com");
+		expect(res.headers.get("Vary")).toBe("Origin");
 	});
 
 	it("should handle function-based origin validation", async () => {
 		app.use(
 			cors({
 				origin: (origin) => origin.endsWith(".example.com"),
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -78,17 +102,17 @@ describe("CORS Middleware", () => {
 		const res = await app.handle(req);
 
 		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://sub.example.com");
+		expect(res.headers.get("Vary")).toBe("Origin");
 	});
 
 	it("should handle async function-based origin validation", async () => {
 		app.use(
 			cors({
 				origin: async (origin) => {
-					// Simulate async check (e.g., database lookup)
-					await new Promise((resolve) => setTimeout(resolve, 10));
+					await new Promise((r) => setTimeout(r, 10));
 					return origin === "https://allowed.com";
 				},
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -98,39 +122,50 @@ describe("CORS Middleware", () => {
 		const res = await app.handle(req);
 
 		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed.com");
-	});
-
-	it("should set credentials header when enabled", async () => {
-		app.use(cors({ credentials: true }));
-		app.get("/", (ctx) => ctx.text("OK"));
-
-		const req = new Request("http://localhost/");
-		const res = await app.handle(req);
-
-		expect(res.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+		expect(res.headers.get("Vary")).toBe("Origin");
 	});
 
 	it("should set exposed headers", async () => {
 		app.use(
 			cors({
 				exposeHeaders: ["X-Custom-Header", "X-Another-Header"],
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
-		const req = new Request("http://localhost/");
+		const req = new Request("http://localhost/", {
+			headers: { Origin: "https://example.com" },
+		});
 		const res = await app.handle(req);
 
 		expect(res.headers.get("Access-Control-Expose-Headers")).toBe("X-Custom-Header, X-Another-Header");
 	});
 
-	it("should handle preflight OPTIONS request", async () => {
+	it("should set Vary: Origin for preflight when origin is reflected", async () => {
+		app.use(
+			cors({
+				origin: "https://example.com",
+			}),
+		);
+		app.get("/", (ctx) => ctx.text("OK"));
+
+		const req = new Request("http://localhost/", {
+			method: "OPTIONS",
+			headers: { Origin: "https://example.com" },
+		});
+		const res = await app.handle(req);
+
+		expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://example.com");
+		expect(res.headers.get("Vary")).toBe("Origin");
+	});
+
+	it("should handle preflight OPTIONS request without Vary when using wildcard origin", async () => {
 		app.use(
 			cors({
 				allowMethods: ["GET", "POST", "PUT"],
 				allowHeaders: ["Content-Type", "Authorization"],
 				maxAge: 3600,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -144,6 +179,7 @@ describe("CORS Middleware", () => {
 		expect(res.headers.get("Access-Control-Allow-Methods")).toBe("GET, POST, PUT");
 		expect(res.headers.get("Access-Control-Allow-Headers")).toBe("Content-Type, Authorization");
 		expect(res.headers.get("Access-Control-Max-Age")).toBe("3600");
+		expect(res.headers.get("Vary")).toBeNull();
 	});
 
 	it("should continue to next middleware when preflightContinue is true", async () => {
@@ -157,6 +193,7 @@ describe("CORS Middleware", () => {
 
 		const req = new Request("http://localhost/", {
 			method: "OPTIONS",
+			headers: { Origin: "https://example.com" },
 		});
 		const res = await app.handle(req);
 
@@ -170,6 +207,7 @@ describe("CORS Middleware", () => {
 
 		const req = new Request("http://localhost/", {
 			method: "OPTIONS",
+			headers: { Origin: "https://example.com" },
 		});
 		const res = await app.handle(req);
 

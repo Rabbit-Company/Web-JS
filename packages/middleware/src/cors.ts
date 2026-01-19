@@ -69,18 +69,29 @@ const defaults: CorsOptions = {
  * @returns {Middleware<T, B>} - A middleware function for handling CORS headers.
  */
 export function cors<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: CorsOptions = {}
+	options: CorsOptions = {},
 ): Middleware<T, B> {
 	const opts = { ...defaults, ...options };
 
 	return async (ctx: Context<T, B>, next) => {
-		const origin = ctx.req.headers.get("Origin") || "";
+		const requestOrigin = ctx.req.headers.get("Origin");
 
-		// Check if origin is allowed
-		const isAllowed = await checkOrigin(origin, opts.origin);
+		// Non-CORS request
+		if (!requestOrigin) {
+			return next();
+		}
+
+		const isAllowed = await checkOrigin(requestOrigin, opts.origin);
 
 		if (isAllowed) {
-			ctx.header("Access-Control-Allow-Origin", origin || "*");
+			const isWildcard = opts.origin === "*" && !opts.credentials;
+
+			if (isWildcard) {
+				ctx.header("Access-Control-Allow-Origin", "*");
+			} else {
+				ctx.header("Access-Control-Allow-Origin", requestOrigin);
+				appendVary(ctx, "Origin");
+			}
 
 			if (opts.credentials) {
 				ctx.header("Access-Control-Allow-Credentials", "true");
@@ -91,7 +102,7 @@ export function cors<T extends Record<string, unknown> = Record<string, unknown>
 			}
 		}
 
-		// Handle preflight
+		// Preflight request
 		if (ctx.req.method === "OPTIONS") {
 			if (opts.allowMethods?.length) {
 				ctx.header("Access-Control-Allow-Methods", opts.allowMethods.join(", "));
@@ -101,12 +112,12 @@ export function cors<T extends Record<string, unknown> = Record<string, unknown>
 				ctx.header("Access-Control-Allow-Headers", opts.allowHeaders.join(", "));
 			}
 
-			if (opts.maxAge) {
-				ctx.header("Access-Control-Max-Age", opts.maxAge.toString());
+			if (opts.maxAge !== undefined) {
+				ctx.header("Access-Control-Max-Age", String(opts.maxAge));
 			}
 
 			if (!opts.preflightContinue) {
-				return ctx.text("", opts.optionsSuccessStatus || 204);
+				return ctx.text("", opts.optionsSuccessStatus ?? 204);
 			}
 		}
 
@@ -125,6 +136,20 @@ async function checkOrigin(origin: string, allowed?: string | string[] | ((origi
 	if (!allowed || allowed === "*") return true;
 	if (typeof allowed === "string") return origin === allowed;
 	if (Array.isArray(allowed)) return allowed.includes(origin);
-	if (typeof allowed === "function") return allowed(origin);
+	if (typeof allowed === "function") return await allowed(origin);
 	return false;
+}
+
+function appendVary(ctx: Context<any, any>, value: string) {
+	const existing = ctx.res?.headers.get("Vary");
+	if (!existing) {
+		ctx.header("Vary", value);
+	} else if (
+		!existing
+			.split(",")
+			.map((v) => v.trim())
+			.includes(value)
+	) {
+		ctx.header("Vary", `${existing}, ${value}`);
+	}
 }

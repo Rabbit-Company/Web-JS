@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-monorepo",
-	"version": "0.16.0",
+	"version": "0.17.0",
 	"description": "High-performance web framework monorepo",
 	"private": true,
 	"type": "module",
@@ -9,7 +9,8 @@
 	"author": "Rabbit Company <info@rabbit-company.com>",
 	"license": "MIT",
 	"workspaces": [
-		"packages/*"
+		"packages/core",
+		"packages/middleware"
 	],
 	"scripts": {
 		"build": "bun run build.ts",
@@ -48,11 +49,12 @@
 	],
 	"devDependencies": {
 		"@types/bun": "latest",
+		"@types/node": "^25.0.9",
 		"typescript": "^5.9.3",
 		"@rabbit-company/logger": "^5.6.0",
 		"bun-plugin-dts": "^0.3.0",
-		"hono": "^4.10.4",
-		"elysia": "^1.4.13"
+		"hono": "^4.11.4",
+		"elysia": "^1.4.22"
 	},
 	"dependencies": {
 		"@rabbit-company/rate-limiter": "^3.0.0"
