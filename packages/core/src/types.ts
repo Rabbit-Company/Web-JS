@@ -25,7 +25,7 @@ import type { ServerWebSocket } from "bun";
  */
 export type Middleware<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>> = (
 	ctx: Context<T, B>,
-	next: Next
+	next: Next,
 ) => Response | Promise<Response | void>;
 
 /**
@@ -264,7 +264,7 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	 * const valid = userSchema.parse(raw);
 	 * ```
 	 */
-	body: <T>() => Promise<T>;
+	body: <U>() => Promise<U>;
 	/**
 	 * Sets a response header.
 	 *
@@ -273,30 +273,29 @@ export interface Context<T extends Record<string, unknown> = Record<string, unkn
 	 *
 	 * @example
 	 * ```typescript
-	 * ctx.header('X-Custom-Header', 'value');
+	 * ctx.header('Cache-Control', 'no-cache');
+	 * ctx.header('X-Request-ID', generateId());
 	 * ```
 	 */
 	header: (name: string, value: string) => void;
 	/**
 	 * Sets a value in the context state.
 	 *
-	 * @template K - Key type from the state object
-	 * @param key - The state key to set
-	 * @param value - The value to set
+	 * @param key - State key
+	 * @param value - State value
 	 *
 	 * @example
 	 * ```typescript
-	 * ctx.set('user', currentUser);
-	 * ctx.set('requestId', uuid());
+	 * ctx.set('user', authenticatedUser);
+	 * ctx.set('requestId', crypto.randomUUID());
 	 * ```
 	 */
 	set: <K extends keyof T>(key: K, value: T[K]) => void;
 	/**
 	 * Gets a value from the context state.
 	 *
-	 * @template K - Key type from the state object
-	 * @param key - The state key to retrieve
-	 * @returns The value associated with the key
+	 * @param key - State key
+	 * @returns The value from state, or undefined if not set
 	 *
 	 * @example
 	 * ```typescript
@@ -525,7 +524,7 @@ export interface BunServerInstance {
 		options?: {
 			data?: any;
 			headers?: HeadersInit;
-		}
+		},
 	): boolean;
 
 	/** Publish data to all subscribers of a topic */
@@ -542,25 +541,121 @@ export interface BunServerInstance {
 }
 
 /**
- * WebSocket handler configuration for Bun runtime
+ * Data attached to WebSocket connections during upgrade.
+ * Contains information extracted from the HTTP request before upgrade.
+ *
+ * @template D - Additional custom data type that can be passed during upgrade
+ *
+ * @example
+ * ```typescript
+ * app.websocket({
+ *   open(ws) {
+ *     // Access the client IP extracted by ipExtract middleware
+ *     const clientIp = ws.data.clientIp;
+ *     console.log(`Client connected from: ${clientIp}`);
+ *
+ *     // Access custom data passed during upgrade
+ *     const userId = ws.data.userId;
+ *   }
+ * });
+ * ```
  */
-export interface BunWebSocketHandler {
+export interface WebSocketData<D extends Record<string, unknown> = Record<string, unknown>> {
+	/**
+	 * Client IP address extracted from headers by ipExtract middleware.
+	 * This is the real client IP even when behind proxies like Cloudflare, nginx, etc.
+	 */
+	clientIp?: string;
+
+	/**
+	 * The original request URL pathname
+	 */
+	url: string;
+
+	/**
+	 * URL parameters extracted from the route path (e.g., :roomId)
+	 */
+	params: Record<string, string>;
+
+	/**
+	 * Query parameters from the upgrade request URL
+	 */
+	query: URLSearchParams;
+
+	/**
+	 * Custom user data passed during upgrade
+	 */
+	custom?: D;
+}
+
+/**
+ * WebSocket handler configuration for Bun runtime.
+ * Handlers receive ServerWebSocket with typed data containing clientIp and request info.
+ *
+ * @template D - Type of custom data attached to WebSocket connections
+ *
+ * @example
+ * ```typescript
+ * // Basic usage with clientIp
+ * app.websocket({
+ *   open(ws) {
+ *     console.log(`Client connected from: ${ws.data.clientIp}`);
+ *     ws.subscribe("chat");
+ *   },
+ *   message(ws, message) {
+ *     console.log(`Message from ${ws.data.clientIp}: ${message}`);
+ *   }
+ * });
+ *
+ * // With custom data
+ * interface MyData {
+ *   userId: string;
+ *   role: 'admin' | 'user';
+ * }
+ *
+ * app.websocket<MyData>({
+ *   open(ws) {
+ *     const { clientIp, custom } = ws.data;
+ *     console.log(`User ${custom?.userId} connected from ${clientIp}`);
+ *   }
+ * });
+ * ```
+ */
+export interface BunWebSocketHandler<D extends Record<string, unknown> = Record<string, unknown>> {
 	/** Maximum allowed message size in bytes */
 	maxPayloadLength?: number;
 	/** Maximum time in seconds the WebSocket can be idle before being closed */
 	idleTimeout?: number;
 	/** Handler for when a connection is opened */
-	open?(ws: ServerWebSocket): void | Promise<void>;
+	open?(ws: ServerWebSocket<WebSocketData<D>>): void | Promise<void>;
 	/** Handler for when a message is received */
-	message?(ws: ServerWebSocket, message: string | Buffer): void | Promise<void>;
+	message?(ws: ServerWebSocket<WebSocketData<D>>, message: string | Buffer): void | Promise<void>;
 	/** Handler for when a connection is closed */
-	close?(ws: ServerWebSocket, code?: number, reason?: string): void | Promise<void>;
+	close?(ws: ServerWebSocket<WebSocketData<D>>, code?: number, reason?: string): void | Promise<void>;
 	/** Handler for when a connection encounters an error */
-	error?(ws: ServerWebSocket, error: Error): void | Promise<void>;
+	error?(ws: ServerWebSocket<WebSocketData<D>>, error: Error): void | Promise<void>;
 	/** Handler for when the connection is drained (backpressure is relieved) */
-	drain?(ws: ServerWebSocket): void | Promise<void>;
+	drain?(ws: ServerWebSocket<WebSocketData<D>>): void | Promise<void>;
 	/** Handler for ping frames */
-	ping?(ws: ServerWebSocket, data: Buffer): void | Promise<void>;
+	ping?(ws: ServerWebSocket<WebSocketData<D>>, data: Buffer): void | Promise<void>;
 	/** Handler for pong frames */
-	pong?(ws: ServerWebSocket, data: Buffer): void | Promise<void>;
+	pong?(ws: ServerWebSocket<WebSocketData<D>>, data: Buffer): void | Promise<void>;
 }
+
+/**
+ * Helper function type to get the client IP from a WebSocket connection.
+ * Use this instead of ws.remoteAddress to get the real client IP behind proxies.
+ *
+ * @example
+ * ```typescript
+ * import { getWebSocketClientIp } from "@rabbit-company/web";
+ *
+ * app.websocket({
+ *   open(ws) {
+ *     const ip = getWebSocketClientIp(ws);
+ *     console.log(`Connected from: ${ip}`);
+ *   }
+ * });
+ * ```
+ */
+export type GetWebSocketClientIp = <D extends Record<string, unknown>>(ws: ServerWebSocket<WebSocketData<D>>) => string | undefined;

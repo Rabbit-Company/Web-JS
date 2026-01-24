@@ -12,8 +12,9 @@ import type {
 	NodeServerInstance,
 	Route,
 	Server,
+	WebSocketData,
 } from "./types";
-
+import type { ServerWebSocket } from "bun";
 /**
  * Runtime detection utilities for identifying the current JavaScript runtime environment.
  * @internal
@@ -615,7 +616,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 						return response;
 					},
 				],
-				optionsId
+				optionsId,
 			);
 		}
 
@@ -1133,7 +1134,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 					});
 				}
 				return res;
-			})
+			}),
 		);
 		return this;
 	}
@@ -1154,7 +1155,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		params: Record<string, string>,
 		parsedUrl: { pathname: string; searchParams?: URLSearchParams },
 		clientIp?: string,
-		env?: B
+		env?: B,
 	): Context<T, B> {
 		// Initialize response headers storage
 		const responseHeaders = new Headers();
@@ -1424,7 +1425,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 							headers: new Headers({ "Content-Type": "text/html; charset=utf-8" }),
 						}),
 					query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
-					body: async () => ({} as any),
+					body: async () => ({}) as any,
 					header: () => {},
 					set: () => {},
 					get: () => undefined as any,
@@ -1598,7 +1599,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 							headers: new Headers({ "Content-Type": "text/html; charset=utf-8" }),
 						}),
 					query: () => parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
-					body: async () => ({} as any),
+					body: async () => ({}) as any,
 					header: () => {},
 					set: () => {},
 					get: () => undefined as any,
@@ -1611,8 +1612,69 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	}
 
 	/**
+	 * Processes middleware for WebSocket upgrade requests to extract client IP and other context.
+	 * This runs middleware (like ipExtract) before upgrading the connection.
+	 *
+	 * @param req - The incoming Request object
+	 * @param directIp - The direct connection IP from Bun
+	 * @returns Promise resolving to WebSocket data to attach during upgrade
+	 * @private
+	 */
+	private async processWebSocketUpgrade(req: Request, directIp?: string): Promise<WebSocketData> {
+		const method = "GET" as Method; // WebSocket upgrades are always GET
+		const parsedUrl = this.parseUrl(req.url);
+		const path = parsedUrl.pathname;
+
+		// Match route to get params
+		const matched = this.match(method, path);
+		const params = matched?.params || {};
+
+		// Start with direct IP
+		let clientIp = directIp;
+
+		// If we have middleware, run them to extract IP (like ipExtract)
+		if (this.middlewares.length > 0) {
+			const methodMiddlewares = this.getMethodMiddlewares(method);
+
+			// Create context for middleware
+			const ctx = this.createContext(req, params, parsedUrl, directIp);
+
+			// Run middleware that matches this path
+			for (const mw of methodMiddlewares) {
+				if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+					continue;
+				}
+
+				const matchResult = mw.match(path);
+				if (matchResult.matched) {
+					try {
+						// Run the middleware with a no-op next
+						await mw.handler(ctx, async () => {});
+
+						// Check if middleware set clientIp (like ipExtract does)
+						if (ctx.clientIp) {
+							clientIp = ctx.clientIp;
+						}
+					} catch {
+						// Ignore middleware errors for WebSocket upgrade
+					}
+				}
+			}
+		}
+
+		return {
+			clientIp,
+			url: path,
+			params,
+			query: parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
+		};
+	}
+
+	/**
 	 * Request handler optimized for Bun runtime with automatic IP extraction.
 	 * Uses Bun's server request info for reliable client IP detection.
+	 * For WebSocket upgrades, runs middleware (like ipExtract) before upgrading
+	 * to ensure the real client IP is available via ws.data.clientIp.
 	 *
 	 * @param req - The incoming Request object
 	 * @param server - Bun server instance
@@ -1629,21 +1691,23 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 */
 	async handleBun(req: Request, server: unknown): Promise<Response> {
 		// Extract client IP from Bun's server object
-		const clientIp = (server as any)?.requestIP?.(req)?.address;
+		const directIp = (server as any)?.requestIP?.(req)?.address;
 
 		// Check if this is a WebSocket upgrade request
 		if (this.bunWebSocket && req.headers.get("upgrade") === "websocket") {
-			// Try to upgrade to WebSocket
+			// Process middleware to extract IP and other context data
+			const wsData = await this.processWebSocketUpgrade(req, directIp);
+
+			// Try to upgrade to WebSocket with the extracted data
 			const bunServer = server as BunServerInstance;
-			if (bunServer.upgrade(req)) {
+			if (bunServer.upgrade(req, { data: wsData })) {
 				// Return empty response to indicate upgrade was handled
 				return new Response(null, { status: 101 });
 			}
 		}
 
-		return this.handleWithIp(req, clientIp);
+		return this.handleWithIp(req, directIp);
 	}
-
 	/**
 	 * Request handler optimized for Deno runtime with automatic IP extraction.
 	 * Uses Deno's ServeHandlerInfo for reliable client IP detection.
@@ -2085,40 +2149,84 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 * Sets up WebSocket handlers for Bun runtime.
 	 * This method must be called before starting the server with listen().
 	 *
+	 * The WebSocket handlers receive typed data via ws.data that includes:
+	 * - clientIp: The real client IP extracted by middleware (like ipExtract)
+	 * - url: The original request URL pathname
+	 * - params: URL parameters extracted from the route
+	 * - query: Query parameters from the upgrade request
+	 *
 	 * @param handlers - WebSocket handler configuration
 	 * @returns The Web instance for method chaining
 	 *
 	 * @example
 	 * ```typescript
+	 * // Use ipExtract middleware to get real client IP behind proxies
+	 * app.use(ipExtract("cloudflare"));
+	 *
 	 * app.websocket({
 	 *   idleTimeout: 120,
 	 *   maxPayloadLength: 1024 * 1024,
 	 *   open(ws) {
-	 *     console.log('WebSocket connected');
+	 *     // Access the real client IP (extracted by ipExtract middleware)
+	 *     const clientIp = ws.data.clientIp;
+	 *     console.log(`Client connected from: ${clientIp}`);
+	 *
+	 *     // Access URL params (e.g., from /ws/room/:roomId)
+	 *     const roomId = ws.data.params.roomId;
+	 *
+	 *     // Access query params
+	 *     const token = ws.data.query.get('token');
+	 *
 	 *     ws.subscribe('prices');
 	 *   },
 	 *   message(ws, message) {
-	 *     console.log('Received:', message);
+	 *     console.log(`Message from ${ws.data.clientIp}: ${message}`);
 	 *   },
 	 *   close(ws) {
 	 *     ws.unsubscribe('prices');
 	 *   }
 	 * });
 	 *
-	 * // Then use in a route
-	 * app.get('/ws', (ctx) => {
+	 * // WebSocket route with parameters
+	 * app.get('/ws/room/:roomId', (ctx) => {
 	 *   if (ctx.req.headers.get('upgrade') === 'websocket') {
-	 *     // The upgrade will be handled automatically by the framework
 	 *     return new Response(null, { status: 101 });
 	 *   }
 	 *   return ctx.text('WebSocket endpoint');
 	 * });
 	 * ```
 	 */
-	websocket(handlers: BunWebSocketHandler): this {
-		this.bunWebSocket = handlers;
+	websocket<D extends Record<string, unknown> = Record<string, unknown>>(handlers: BunWebSocketHandler<D>): this {
+		this.bunWebSocket = handlers as BunWebSocketHandler;
 		return this;
 	}
+}
+
+/**
+ * Helper function to get the real client IP from a WebSocket connection.
+ * Use this instead of ws.remoteAddress to get the real client IP when behind proxies.
+ *
+ * @param ws - The WebSocket connection
+ * @returns The client IP address or undefined
+ *
+ * @example
+ * ```typescript
+ * import { getWebSocketClientIp } from "@rabbit-company/web";
+ *
+ * app.websocket({
+ *   open(ws) {
+ *     const ip = getWebSocketClientIp(ws);
+ *     console.log(`Client connected from: ${ip}`);
+ *   },
+ *   message(ws, message) {
+ *     const ip = getWebSocketClientIp(ws);
+ *     console.log(`Message from ${ip}: ${message}`);
+ *   }
+ * });
+ * ```
+ */
+export function getWebSocketClientIp<D extends Record<string, unknown> = Record<string, unknown>>(ws: ServerWebSocket<WebSocketData<D>>): string | undefined {
+	return ws.data?.clientIp;
 }
 
 /**

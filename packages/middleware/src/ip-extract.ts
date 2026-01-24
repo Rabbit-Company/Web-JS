@@ -153,7 +153,7 @@ const CLOUD_CONFIGS: Record<string, CloudProviderConfig> = {
  * ```
  */
 export function ipExtract<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	config: IpExtractionConfig | keyof typeof IP_EXTRACTION_PRESETS = "direct"
+	config: IpExtractionConfig | keyof typeof IP_EXTRACTION_PRESETS = "direct",
 ): Middleware<T, B> {
 	// Handle preset strings
 	const resolvedConfig: IpExtractionConfig = typeof config === "string" ? IP_EXTRACTION_PRESETS[config] : config;
@@ -228,11 +228,11 @@ export function getClientIp<T extends Record<string, unknown>, B extends Record<
  */
 function secureExtractClientIp<T extends Record<string, unknown>, B extends Record<string, unknown>>(
 	ctx: Context<T, B>,
-	config: Required<IpExtractionConfig>
+	config: Required<IpExtractionConfig>,
 ): string | undefined {
 	// 1. If not trusting proxies, only use direct connection IP
 	if (!config.trustProxy) {
-		return ctx.clientIp;
+		return ctx.clientIp ? normalizeIp(ctx.clientIp) : undefined;
 	}
 
 	// 2. Verify the request comes from a trusted proxy (if configured)
@@ -242,7 +242,7 @@ function secureExtractClientIp<T extends Record<string, unknown>, B extends Reco
 			if (config.logWarnings) {
 				console.warn(`[ipExtract] Untrusted proxy attempt from ${ctx.clientIp}`);
 			}
-			return ctx.clientIp;
+			return ctx.clientIp ? normalizeIp(ctx.clientIp) : undefined;
 		}
 	}
 
@@ -265,7 +265,7 @@ function secureExtractClientIp<T extends Record<string, unknown>, B extends Reco
 	}
 
 	// 4. Fall back to direct connection
-	return ctx.clientIp;
+	return ctx.clientIp ? normalizeIp(ctx.clientIp) : undefined;
 }
 
 /**

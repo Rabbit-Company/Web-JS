@@ -66,7 +66,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -94,7 +94,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -125,7 +125,7 @@ describe("IP Extract Middleware", () => {
 					trustedHeaders: ["x-forwarded-for"],
 					maxProxyChain: 2,
 					logWarnings: false,
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -155,7 +155,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-real-ip", "x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -185,7 +185,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-custom-ip"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -211,7 +211,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -239,7 +239,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -267,7 +267,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -307,7 +307,7 @@ describe("IP Extract Middleware", () => {
 					trustProxy: true,
 					trustedProxies: ["10.0.0.0/8"],
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
@@ -344,7 +344,7 @@ describe("IP Extract Middleware", () => {
 					trustedProxies: ["10.0.0.0/8"],
 					trustedHeaders: ["x-forwarded-for"],
 					logWarnings: false,
-				})
+				}),
 			);
 
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
@@ -381,7 +381,7 @@ describe("IP Extract Middleware", () => {
 					trustProxy: true,
 					trustedProxies: ["172.16.0.0/12", "192.168.1.100"],
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
@@ -467,7 +467,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					cloudProvider: "vercel",
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -500,7 +500,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-real-ip"],
-				})
+				}),
 			);
 
 			app.get("/", (ctx) => {
@@ -535,7 +535,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -564,7 +564,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
 
@@ -593,7 +593,7 @@ describe("IP Extract Middleware", () => {
 					trustProxy: true,
 					trustedHeaders: ["x-forwarded-for"],
 					logWarnings: false,
-				})
+				}),
 			);
 
 			app.get("/", (ctx) => ctx.json({ success: true, ip: ctx.clientIp }));
@@ -654,7 +654,7 @@ describe("IP Extract Middleware", () => {
 				ipExtract({
 					trustProxy: true,
 					trustedHeaders: ["x-real-ip"],
-				})
+				}),
 			);
 
 			// Route handler
@@ -699,7 +699,7 @@ describe("IP Validation Functions", () => {
 			ipExtract({
 				trustProxy: true,
 				trustedHeaders: ["x-forwarded-for"],
-			})
+			}),
 		);
 
 		app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
