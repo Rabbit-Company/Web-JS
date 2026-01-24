@@ -14,7 +14,7 @@ import type {
 	Server,
 	WebSocketData,
 } from "./types";
-import type { ServerWebSocket } from "bun";
+
 /**
  * Runtime detection utilities for identifying the current JavaScript runtime environment.
  * @internal
@@ -2200,33 +2200,6 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		this.bunWebSocket = handlers as BunWebSocketHandler;
 		return this;
 	}
-}
-
-/**
- * Helper function to get the real client IP from a WebSocket connection.
- * Use this instead of ws.remoteAddress to get the real client IP when behind proxies.
- *
- * @param ws - The WebSocket connection
- * @returns The client IP address or undefined
- *
- * @example
- * ```typescript
- * import { getWebSocketClientIp } from "@rabbit-company/web";
- *
- * app.websocket({
- *   open(ws) {
- *     const ip = getWebSocketClientIp(ws);
- *     console.log(`Client connected from: ${ip}`);
- *   },
- *   message(ws, message) {
- *     const ip = getWebSocketClientIp(ws);
- *     console.log(`Message from ${ip}: ${message}`);
- *   }
- * });
- * ```
- */
-export function getWebSocketClientIp<D extends Record<string, unknown> = Record<string, unknown>>(ws: ServerWebSocket<WebSocketData<D>>): string | undefined {
-	return ws.data?.clientIp;
 }
 
 /**
