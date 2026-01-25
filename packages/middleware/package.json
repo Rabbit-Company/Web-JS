@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.18.0",
+	"version": "0.18.1",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
@@ -83,10 +83,10 @@
 		"rate-limit"
 	],
 	"peerDependencies": {
-		"@rabbit-company/web": "^0.18.0"
+		"@rabbit-company/web": "^0.18.1"
 	},
 	"dependencies": {
-		"@rabbit-company/rate-limiter": "^3.0.0",
+		"@rabbit-company/rate-limiter": "^3.0.1",
 		"@rabbit-company/logger": "^5.6.0"
 	},
 	"devDependencies": {
