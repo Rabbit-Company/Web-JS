@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 
 /**
  * Options for configuring the Basic Authentication middleware.
@@ -36,6 +38,24 @@ export interface BasicAuthOptions<T extends Record<string, unknown>, B extends R
 }
 
 /**
+ * Decodes base64 Basic credentials as UTF-8, which browsers and curl send,
+ * falling back to Latin-1 for older clients whose bytes aren't valid UTF-8.
+ *
+ * @param encoded - The base64 part of the Authorization header
+ * @returns The decoded "user-id:password" string
+ * @throws When the value isn't valid base64
+ */
+function decodeCredentials(encoded: string): string {
+	const binary = atob(encoded);
+	const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+	try {
+		return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	} catch {
+		return binary;
+	}
+}
+
+/**
  * Basic Authentication middleware for HTTP Basic Auth.
  *
  * Adds a user object to the context on successful authentication.
@@ -45,7 +65,7 @@ export interface BasicAuthOptions<T extends Record<string, unknown>, B extends R
  * @returns {Middleware<T, B>} - Middleware function for basic authentication.
  */
 export function basicAuth<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: BasicAuthOptions<T, B>
+	options: BasicAuthOptions<T, B>,
 ): Middleware<T, B> {
 	const { skip, validate, realm = "Restricted", contextKey = "user" as keyof T } = options;
 
@@ -63,8 +83,15 @@ export function basicAuth<T extends Record<string, unknown> = Record<string, unk
 		}
 
 		try {
-			const credentials = atob(auth.slice(6));
-			const [username, password] = credentials.split(":");
+			const credentials = decodeCredentials(auth.slice(6));
+
+			const separator = credentials.indexOf(":");
+			if (separator === -1) {
+				return ctx.text("Invalid credentials", 400);
+			}
+
+			const username = credentials.slice(0, separator);
+			const password = credentials.slice(separator + 1);
 
 			const isValid = await validate(username, password, ctx);
 

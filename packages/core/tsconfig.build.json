@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"rootDir": "./src",
+		"outDir": "./dist",
+		/* Core must stay runtime-neutral: fail the build if it depends on Bun or Node.js types */
+		"types": []
+	},
+	"include": ["src"]
+}

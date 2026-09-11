@@ -1,4 +1,7 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
+import { expandIpv6, isIpv4InCidr, isIpv6InCidr } from "./internal/ip.ts";
 
 /**
  * Secure IP extraction configuration
@@ -134,6 +137,9 @@ const CLOUD_CONFIGS: Record<string, CloudProviderConfig> = {
  *
  * // Behind Cloudflare
  * app.use(ipExtract("cloudflare"));
+ *
+ * // Behind BurrowGate, only trusting headers from the BurrowGate host
+ * app.use(ipExtract({ ...IP_EXTRACTION_PRESETS.burrowgate, trustedProxies: ["10.0.0.5"] }));
  *
  * // Custom configuration
  * app.use(ipExtract({
@@ -327,7 +333,8 @@ function isIpTrusted(ip: string, trustedList: string[]): boolean {
 			if (isIpInCidr(normalizedIp, trusted)) {
 				return true;
 			}
-		} else if (normalizedIp === trusted) {
+		} else if (normalizedIp === trusted || (isIpv6(normalizedIp) && isIpv6(trusted) && expandIpv6(normalizedIp) === expandIpv6(trusted))) {
+			// Exact match = IPv6 is compared by value, so "2001:DB8::1" equals "2001:db8:0:0:0:0:0:1"
 			return true;
 		}
 	}
@@ -345,73 +352,20 @@ function isIpTrusted(ip: string, trustedList: string[]): boolean {
  */
 function isIpInCidr(ip: string, cidr: string): boolean {
 	const [range, prefixLength] = cidr.split("/");
-	const prefix = parseInt(prefixLength, 10);
 
-	// Handle IPv4
+	// Reject malformed prefixes instead of reading them as /0, which would trust every address
+	if (!/^\d{1,3}$/.test(prefixLength ?? "")) return false;
+	const prefix = Number(prefixLength);
+
 	if (isIpv4(ip) && isIpv4(range)) {
-		const ipNum = ipv4ToNumber(ip);
-		const rangeNum = ipv4ToNumber(range);
-		const mask = (0xffffffff << (32 - prefix)) >>> 0;
-
-		return (ipNum & mask) === (rangeNum & mask);
+		return isIpv4InCidr(ip, range, prefix);
 	}
 
-	// Handle IPv6
 	if (isIpv6(ip) && isIpv6(range)) {
 		return isIpv6InCidr(ip, range, prefix);
 	}
 
 	return false;
-}
-
-/**
- * Convert IPv4 address to number for CIDR calculation
- *
- * @internal
- * @param {string} ip - IPv4 address
- * @returns {number} Numeric representation
- */
-function ipv4ToNumber(ip: string): number {
-	const parts = ip.split(".").map((p) => parseInt(p, 10));
-	return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-/**
- * Check if IPv6 is in CIDR range (simplified implementation)
- *
- * @internal
- * @param {string} ip - IPv6 address
- * @param {string} range - IPv6 CIDR range
- * @param {number} prefix - Prefix length
- * @returns {boolean} True if IP is within range
- */
-function isIpv6InCidr(ip: string, range: string, prefix: number): boolean {
-	// This is a simplified check - for production use, consider a library
-	// For now, we'll do a string prefix match for common cases
-	if (prefix % 4 === 0) {
-		const hexChars = prefix / 4;
-		const ipNorm = normalizeIpv6(ip);
-		const rangeNorm = normalizeIpv6(range);
-		return ipNorm.substring(0, hexChars) === rangeNorm.substring(0, hexChars);
-	}
-	// For non-nibble-aligned prefixes, we'd need bit manipulation
-	return false;
-}
-
-/**
- * Basic IPv6 normalization
- *
- * @internal
- * @param {string} ip - IPv6 address
- * @returns {string} Normalized IPv6 address
- */
-function normalizeIpv6(ip: string): string {
-	// Remove any zone index
-	const cleanIp = ip.split("%")[0];
-
-	// This is a very basic normalization
-	// For production, use a proper library
-	return cleanIp.toLowerCase();
 }
 
 /**
@@ -582,6 +536,18 @@ export const IP_EXTRACTION_PRESETS = {
 	nginx: {
 		trustProxy: true,
 		trustedHeaders: ["x-real-ip", "x-forwarded-for"],
+		maxProxyChain: 1,
+	} as IpExtractionConfig,
+
+	/**
+	 * Behind BurrowGate reverse proxy
+	 * BurrowGate replaces all client-supplied forwarding headers with the client IP it observed.
+	 * Only safe when the origin is unreachable except through BurrowGate, or combined with
+	 * `trustedProxies`. Prefer the `burrowgateOrigin` middleware, which verifies the signed IP.
+	 */
+	burrowgate: {
+		trustProxy: true,
+		trustedHeaders: ["x-burrowgate-client-ip", "x-real-ip"],
 		maxProxyChain: 1,
 	} as IpExtractionConfig,
 

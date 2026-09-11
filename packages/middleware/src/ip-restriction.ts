@@ -1,4 +1,7 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
+import { isIpv4InCidr, isIpv6InCidr } from "./internal/ip.ts";
 
 /**
  * IP restriction middleware configuration
@@ -77,7 +80,7 @@ interface ResolvedIpRestrictionConfig<T extends Record<string, unknown>, B exten
  */
 export interface DynamicIpRestriction<
 	T extends Record<string, unknown> = Record<string, unknown>,
-	B extends Record<string, unknown> = Record<string, unknown>
+	B extends Record<string, unknown> = Record<string, unknown>,
 > {
 	/**
 	 * The middleware function to use in your app
@@ -150,7 +153,7 @@ export interface DynamicIpRestriction<
  * }));
  *
  * // Dynamic message based on IP
- * app.use("/admin", ipRestriction({
+ * app.use("/admin/*", ipRestriction({
  *   mode: "whitelist",
  *   ips: ["10.0.0.0/8"],
  *   message: (ip) => `Access denied for ${ip}. Admin panel is restricted to internal network.`
@@ -418,124 +421,6 @@ function isIpInCidr(ip: string, network: string, prefixLength: number, version: 
 }
 
 /**
- * Check if IPv4 is in CIDR range
- * @param ip - IPv4 address
- * @param network - Network address
- * @param prefixLength - CIDR prefix length
- * @returns True if IP is in range
- * @internal
- */
-function isIpv4InCidr(ip: string, network: string, prefixLength: number): boolean {
-	const ipNum = ipv4ToNumber(ip);
-	const networkNum = ipv4ToNumber(network);
-	const mask = (0xffffffff << (32 - prefixLength)) >>> 0;
-
-	return (ipNum & mask) === (networkNum & mask);
-}
-
-/**
- * Convert IPv4 to number
- * @param ip - IPv4 address
- * @returns Numeric representation
- * @internal
- */
-function ipv4ToNumber(ip: string): number {
-	const parts = ip.split(".").map((p: string): number => parseInt(p, 10));
-	return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-/**
- * Check if IPv6 is in CIDR range (simplified)
- * @param ip - IPv6 address
- * @param network - Network address
- * @param prefixLength - CIDR prefix length
- * @returns True if IP is in range
- * @internal
- */
-function isIpv6InCidr(ip: string, network: string, prefixLength: number): boolean {
-	// Expand IPv6 addresses
-	const expandedIp = expandIpv6(ip);
-	const expandedNetwork = expandIpv6(network);
-
-	// Compare bit by bit up to prefix length
-	const bitsToCompare = Math.floor(prefixLength / 4);
-
-	for (let i = 0; i < bitsToCompare; i++) {
-		if (expandedIp[i] !== expandedNetwork[i]) {
-			return false;
-		}
-	}
-
-	// Handle remaining bits
-	const remainingBits = prefixLength % 4;
-	if (remainingBits > 0) {
-		const index = bitsToCompare;
-		const mask = (0xf << (4 - remainingBits)) & 0xf;
-		const ipNibble = parseInt(expandedIp[index], 16);
-		const networkNibble = parseInt(expandedNetwork[index], 16);
-
-		if ((ipNibble & mask) !== (networkNibble & mask)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-/**
- * Expand IPv6 address to full form
- * @param ip - IPv6 address
- * @returns Expanded IPv6 address
- * @internal
- */
-function expandIpv6(ip: string): string {
-	// Remove zone identifier
-	ip = ip.split("%")[0];
-
-	// Handle IPv4-mapped IPv6
-	if (ip.includes(".")) {
-		const lastColon = ip.lastIndexOf(":");
-		const ipv4Part = ip.substring(lastColon + 1);
-		const ipv6Part = ip.substring(0, lastColon);
-
-		// Convert IPv4 to hex
-		const ipv4Parts = ipv4Part.split(".").map((p: string): number => parseInt(p, 10));
-		const ipv4Hex = ((ipv4Parts[0] << 8) | ipv4Parts[1]).toString(16).padStart(4, "0") + ((ipv4Parts[2] << 8) | ipv4Parts[3]).toString(16).padStart(4, "0");
-
-		ip = ipv6Part + ":" + ipv4Hex.substring(0, 4) + ":" + ipv4Hex.substring(4);
-	}
-
-	// Split into groups
-	let groups = ip.split(":");
-
-	// Find :: and expand it
-	const emptyIndex = groups.indexOf("");
-	if (emptyIndex !== -1) {
-		// Remove empty strings
-		groups = groups.filter((g: string): boolean => g !== "");
-
-		// Calculate how many zeros to insert
-		const missingGroups = 8 - groups.length;
-		const zeros: string[] = new Array(missingGroups).fill("0000");
-
-		// Insert zeros at the correct position
-		if (emptyIndex === 0) {
-			groups = zeros.concat(groups);
-		} else if (emptyIndex === groups.length) {
-			groups = groups.concat(zeros);
-		} else {
-			groups = groups.slice(0, emptyIndex).concat(zeros).concat(groups.slice(emptyIndex));
-		}
-	}
-
-	// Pad each group to 4 characters
-	groups = groups.map((g: string): string => g.padStart(4, "0"));
-
-	// Join back together
-	return groups.join("").toLowerCase();
-}
-
-/**
  * Create a dynamic IP restriction that can be updated
  * @param initialConfig - Initial IP restriction configuration
  * @returns Dynamic IP restriction instance
@@ -560,7 +445,7 @@ function expandIpv6(ip: string): string {
  * ```
  */
 export function createDynamicIpRestriction<T extends Record<string, unknown>, B extends Record<string, unknown>>(
-	initialConfig: IpRestrictionConfig<T, B>
+	initialConfig: IpRestrictionConfig<T, B>,
 ): DynamicIpRestriction<T, B> {
 	let config: IpRestrictionConfig<T, B> = { ...initialConfig };
 	let middleware: Middleware<T, B> = ipRestriction(config);

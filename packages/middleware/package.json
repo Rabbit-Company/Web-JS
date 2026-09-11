@@ -1,6 +1,6 @@
 {
 	"name": "@rabbit-company/web-middleware",
-	"version": "0.18.2",
+	"version": "0.19.0",
 	"description": "Official middleware collection for Rabbit Company Web Framework",
 	"type": "module",
 	"homepage": "https://github.com/Rabbit-Company/Web-JS",
@@ -20,6 +20,10 @@
 		"./body-limit": {
 			"types": "./dist/body-limit.d.ts",
 			"import": "./dist/body-limit.js"
+		},
+		"./burrowgate": {
+			"types": "./dist/burrowgate.d.ts",
+			"import": "./dist/burrowgate.js"
 		},
 		"./cache": {
 			"types": "./dist/cache.d.ts",
@@ -75,6 +79,7 @@
 		"basic-auth",
 		"bearer-auth",
 		"body-limit",
+		"burrowgate",
 		"cache",
 		"cors",
 		"ip-extract",
@@ -83,14 +88,15 @@
 		"rate-limit"
 	],
 	"peerDependencies": {
-		"@rabbit-company/web": "^0.18.2"
+		"@rabbit-company/web": "^0.19.0"
 	},
 	"dependencies": {
-		"@rabbit-company/rate-limiter": "^3.0.1",
-		"@rabbit-company/logger": "^5.6.1"
+		"@rabbit-company/burrowgate-auth": "^1.2.0",
+		"@rabbit-company/logger": "^5.6.1",
+		"@rabbit-company/rate-limiter": "^3.0.1"
 	},
 	"devDependencies": {
 		"@types/bun": "latest",
-		"typescript": "^5.9.3"
+		"typescript": "^7.0.2"
 	}
 }

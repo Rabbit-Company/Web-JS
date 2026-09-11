@@ -55,7 +55,7 @@ describe("Rate Limit Middleware", () => {
 				max: 1,
 				message: "Rate limit exceeded",
 				statusCode: 503,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -124,7 +124,7 @@ describe("Rate Limit Middleware", () => {
 			rateLimit({
 				max: 1,
 				keyGenerator: (ctx) => ctx.req.headers.get("API-Key") || "anonymous",
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -148,7 +148,7 @@ describe("Rate Limit Middleware", () => {
 			rateLimit({
 				max: 1,
 				skip: (ctx) => ctx.req.headers.get("X-Admin") === "true",
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -177,7 +177,7 @@ describe("Rate Limit Middleware", () => {
 					await new Promise((resolve) => setTimeout(resolve, 10));
 					return ctx.req.url.includes("webhook");
 				},
-			})
+			}),
 		);
 		app.get("/webhook", (ctx) => ctx.text("OK"));
 		app.get("/api", (ctx) => ctx.text("OK"));
@@ -210,7 +210,7 @@ describe("Rate Limit Middleware", () => {
 			rateLimit({
 				max: 2,
 				endpointGenerator: (ctx) => "global", // All requests share the same limit
-			})
+			}),
 		);
 		app.get("/api/users", (ctx) => ctx.text("Users"));
 		app.get("/api/posts", (ctx) => ctx.text("Posts"));
@@ -231,7 +231,7 @@ describe("Rate Limit Middleware", () => {
 				max: 3,
 				windowMs: 200,
 				precision: 50,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -265,7 +265,7 @@ describe("Rate Limit Middleware", () => {
 				max: 3, // Bucket capacity
 				refillRate: 1, // 1 token per interval
 				refillInterval: 100, // Refill every 100ms
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -316,7 +316,7 @@ describe("Rate Limit Middleware", () => {
 				keyGenerator: createKeyGenerator({
 					custom: (ctx) => ctx.req.headers.get("API-Key"),
 				}),
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 
@@ -345,7 +345,7 @@ describe("Rate Limit Middleware", () => {
 			rateLimit({
 				algorithm: Algorithm.TOKEN_BUCKET,
 				max: 1,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("OK"));
 

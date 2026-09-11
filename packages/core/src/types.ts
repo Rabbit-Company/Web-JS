@@ -1,5 +1,3 @@
-import type { ServerWebSocket } from "bun";
-
 /**
  * Middleware function type that processes requests and can return responses.
  * Middleware functions receive a context object and a next function to call the next middleware in the chain.
@@ -356,7 +354,7 @@ export interface Server {
 	instance: unknown;
 
 	/** Publish data to all subscribers of a topic (Bun only) */
-	publish(topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
+	publish(topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
 
 	/** Get number of pending HTTP requests (Bun only) */
 	readonly pendingRequests: number;
@@ -367,6 +365,12 @@ export interface Server {
 	/** Get number of subscribers for a topic (Bun only) */
 	subscriberCount(topic: string): number;
 }
+
+/**
+ * Node's `Buffer` when its type definitions are loaded (Bun, Node.js), otherwise `Uint8Array` (Deno).
+ * `Buffer` extends `Uint8Array`, so code written against `Uint8Array` works on every runtime.
+ */
+export type BufferLike = typeof globalThis extends { Buffer: { alloc(...args: any[]): infer B } } ? B : Uint8Array;
 
 /**
  * Node.js specific server options for HTTP/HTTPS configuration.
@@ -381,12 +385,12 @@ export interface NodeServerOptions {
 	 * TLS private key for HTTPS server.
 	 * Required when https is true.
 	 */
-	key?: string | Buffer;
+	key?: string | Uint8Array;
 	/**
 	 * TLS certificate for HTTPS server.
 	 * Required when https is true.
 	 */
-	cert?: string | Buffer;
+	cert?: string | Uint8Array;
 }
 
 /**
@@ -405,15 +409,26 @@ export interface DenoServerOptions {
 }
 
 /**
+ * A file reference returned by `Bun.file()`.
+ *
+ * Matches `Bun.BunFile` structurally so these types don't depend on Bun's type definitions
+ * when used from Node.js or Deno. Plain `Blob`s are excluded because Bun rejects them for TLS.
+ */
+export interface BunFileLike extends Blob {
+	/** Whether the file exists on disk */
+	exists(): Promise<boolean>;
+}
+
+/**
  * Bun specific TLS configuration.
  */
 export interface BunTlsOptions {
 	/** TLS private key */
-	key?: string | Buffer | Array<string | Buffer>;
+	key?: string | Uint8Array | BunFileLike | Array<string | Uint8Array | BunFileLike>;
 	/** TLS certificate */
-	cert?: string | Buffer | Array<string | Buffer>;
+	cert?: string | Uint8Array | BunFileLike | Array<string | Uint8Array | BunFileLike>;
 	/** TLS certificate authority */
-	ca?: string | Buffer | Array<string | Buffer>;
+	ca?: string | Uint8Array | BunFileLike | Array<string | Uint8Array | BunFileLike>;
 	/** Passphrase for the private key */
 	passphrase?: string;
 	/** Diffie-Hellman parameters */
@@ -437,8 +452,29 @@ export interface BunServerOptions {
 	websocket?: BunWebSocketHandler;
 	/** Server name for the Server header */
 	serverName?: string;
-	/** Enable HTTP/2 support */
+	/** Set the `SO_REUSEPORT` flag so multiple processes can bind to the same port */
 	reusePort?: boolean;
+	/**
+	 * Also serve HTTP/2 on the same port (experimental, Bun 1.4+).
+	 * With `tls`, clients offering "h2" via ALPN get HTTP/2 and everyone else HTTP/1.1.
+	 * Without `tls`, connections that open with the HTTP/2 preface (prior knowledge) get HTTP/2.
+	 * WebSockets are not supported over HTTP/2 (They keep working over HTTP/1.1).
+	 * @default false
+	 */
+	http2?: boolean;
+	/**
+	 * Also listen for HTTP/3 (QUIC) on UDP of the same port (experimental, Bun 1.4+). Requires `tls`.
+	 * Responses advertise it with an `Alt-Svc` header so browsers upgrade on their own.
+	 * WebSockets are not supported over HTTP/3 (They keep working over HTTP/1.1).
+	 * @default false
+	 */
+	http3?: boolean;
+	/**
+	 * Serve HTTP/1.1. Set to `false` together with `http2` and/or `http3` to refuse HTTP/1.x clients
+	 * (they receive `505 HTTP Version Not Supported`). This also disables WebSockets.
+	 * @default true
+	 */
+	http1?: boolean;
 }
 
 /**
@@ -528,7 +564,7 @@ export interface BunServerInstance {
 	): boolean;
 
 	/** Publish data to all subscribers of a topic */
-	publish(topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
+	publish(topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number;
 
 	/** Get number of active WebSocket connections */
 	readonly pendingWebSockets: number;
@@ -589,8 +625,65 @@ export interface WebSocketData<D extends Record<string, unknown> = Record<string
 }
 
 /**
+ * Binary data accepted by WebSocket send and publish methods.
+ */
+export type WebSocketBinaryData = ArrayBufferView | ArrayBufferLike | Blob;
+
+/**
+ * A server-side WebSocket connection in Bun.
+ *
+ * Mirrors Bun's `ServerWebSocket` so these types don't depend on Bun's type definitions
+ * when used from Node.js or Deno. Send and publish methods return the number of bytes sent,
+ * `-1` when the message was enqueued due to backpressure, or `0` when it was dropped.
+ *
+ * @template T - Type of `ws.data`
+ */
+export interface BunServerWebSocket<T = undefined> {
+	/** Send a message to the client */
+	send(data: string | WebSocketBinaryData, compress?: boolean): number;
+	/** Send a text message to the client */
+	sendText(data: string, compress?: boolean): number;
+	/** Send a binary message to the client */
+	sendBinary(data: WebSocketBinaryData, compress?: boolean): number;
+	/** Close the connection gracefully */
+	close(code?: number, reason?: string): void;
+	/** Abruptly close the connection */
+	terminate(): void;
+	/** Send a ping frame */
+	ping(data?: string | WebSocketBinaryData): number;
+	/** Send a pong frame */
+	pong(data?: string | WebSocketBinaryData): number;
+	/** Send a message to all subscribers of a topic, excluding this connection */
+	publish(topic: string, data: string | WebSocketBinaryData, compress?: boolean): number;
+	/** Send a text message to all subscribers of a topic, excluding this connection */
+	publishText(topic: string, data: string, compress?: boolean): number;
+	/** Send a binary message to all subscribers of a topic, excluding this connection */
+	publishBinary(topic: string, data: WebSocketBinaryData, compress?: boolean): number;
+	/** Subscribe to a topic */
+	subscribe(topic: string): boolean;
+	/** Unsubscribe from a topic */
+	unsubscribe(topic: string): boolean;
+	/** Whether this connection is subscribed to a topic */
+	isSubscribed(topic: string): boolean;
+	/** Topics this connection is subscribed to */
+	readonly subscriptions: string[];
+	/** Batch several sends into a single system call */
+	cork<U = unknown>(callback: (ws: BunServerWebSocket<U>) => U): U;
+	/** IP address of the direct connection (use `data.clientIp` for the real client behind proxies) */
+	readonly remoteAddress: string;
+	/** Connection state: 0 connecting, 1 open, 2 closing, 3 closed */
+	readonly readyState: 0 | 1 | 2 | 3;
+	/** How binary messages are delivered to the `message` handler */
+	binaryType?: "nodebuffer" | "arraybuffer" | "uint8array" | "blob";
+	/** Data attached during the upgrade */
+	data: T;
+	/** Number of bytes queued but not yet sent */
+	getBufferedAmount(): number;
+}
+
+/**
  * WebSocket handler configuration for Bun runtime.
- * Handlers receive ServerWebSocket with typed data containing clientIp and request info.
+ * Handlers receive a BunServerWebSocket with typed data containing clientIp and request info.
  *
  * @template D - Type of custom data attached to WebSocket connections
  *
@@ -627,19 +720,19 @@ export interface BunWebSocketHandler<D extends Record<string, unknown> = Record<
 	/** Maximum time in seconds the WebSocket can be idle before being closed */
 	idleTimeout?: number;
 	/** Handler for when a connection is opened */
-	open?(ws: ServerWebSocket<WebSocketData<D>>): void | Promise<void>;
+	open?(ws: BunServerWebSocket<WebSocketData<D>>): void | Promise<void>;
 	/** Handler for when a message is received */
-	message?(ws: ServerWebSocket<WebSocketData<D>>, message: string | Buffer): void | Promise<void>;
+	message?(ws: BunServerWebSocket<WebSocketData<D>>, message: string | BufferLike): void | Promise<void>;
 	/** Handler for when a connection is closed */
-	close?(ws: ServerWebSocket<WebSocketData<D>>, code?: number, reason?: string): void | Promise<void>;
+	close?(ws: BunServerWebSocket<WebSocketData<D>>, code?: number, reason?: string): void | Promise<void>;
 	/** Handler for when a connection encounters an error */
-	error?(ws: ServerWebSocket<WebSocketData<D>>, error: Error): void | Promise<void>;
+	error?(ws: BunServerWebSocket<WebSocketData<D>>, error: Error): void | Promise<void>;
 	/** Handler for when the connection is drained (backpressure is relieved) */
-	drain?(ws: ServerWebSocket<WebSocketData<D>>): void | Promise<void>;
+	drain?(ws: BunServerWebSocket<WebSocketData<D>>): void | Promise<void>;
 	/** Handler for ping frames */
-	ping?(ws: ServerWebSocket<WebSocketData<D>>, data: Buffer): void | Promise<void>;
+	ping?(ws: BunServerWebSocket<WebSocketData<D>>, data: BufferLike): void | Promise<void>;
 	/** Handler for pong frames */
-	pong?(ws: ServerWebSocket<WebSocketData<D>>, data: Buffer): void | Promise<void>;
+	pong?(ws: BunServerWebSocket<WebSocketData<D>>, data: BufferLike): void | Promise<void>;
 }
 
 /**
@@ -658,4 +751,4 @@ export interface BunWebSocketHandler<D extends Record<string, unknown> = Record<
  * });
  * ```
  */
-export type GetWebSocketClientIp = <D extends Record<string, unknown>>(ws: ServerWebSocket<WebSocketData<D>>) => string | undefined;
+export type GetWebSocketClientIp = <D extends Record<string, unknown>>(ws: BunServerWebSocket<WebSocketData<D>>) => string | undefined;

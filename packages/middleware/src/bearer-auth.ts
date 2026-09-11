@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 
 /**
  * Options for configuring the Bearer Token Authentication middleware.
@@ -95,7 +97,7 @@ export interface BearerAuthOptions<T extends Record<string, unknown>, B extends 
  * ```
  */
 export function bearerAuth<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: BearerAuthOptions<T, B>
+	options: BearerAuthOptions<T, B>,
 ): Middleware<T, B> {
 	const {
 		skip,

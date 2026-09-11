@@ -235,7 +235,7 @@ function setupComplexRoutes(app: Web | Hono | Elysia) {
 			ctx.json({
 				category: ctx.params.category,
 				subcategory: ctx.params.subcategory,
-			})
+			}),
 		);
 	} else if (app instanceof Hono) {
 		app.get("/", (c: any) => c.json({ message: "home" }));
@@ -251,7 +251,7 @@ function setupComplexRoutes(app: Web | Hono | Elysia) {
 			c.json({
 				category: c.req.param("category"),
 				subcategory: c.req.param("subcategory"),
-			})
+			}),
 		);
 	} else if (app instanceof Elysia) {
 		app.get("/", () => ({ message: "home" }));
@@ -274,7 +274,7 @@ function setupMiddlewareRoutes(
 	app:
 		| Web<{ requestId: string; authenticated: boolean; apiVersion: string }>
 		| Hono<{ Variables: { requestId: string; authenticated: boolean; apiVersion: string } }>
-		| Elysia
+		| Elysia,
 ) {
 	if (app instanceof Web) {
 		// Global middleware
@@ -299,20 +299,20 @@ function setupMiddlewareRoutes(
 				data: "protected",
 				requestId: ctx.get("requestId"),
 				authenticated: ctx.get("authenticated"),
-			})
+			}),
 		);
 		app.get("/api/data", (ctx) =>
 			ctx.json({
 				data: "api",
 				requestId: ctx.get("requestId"),
 				version: ctx.get("apiVersion"),
-			})
+			}),
 		);
 		app.get("/public/info", (ctx) =>
 			ctx.json({
 				data: "public",
 				requestId: ctx.get("requestId"),
-			})
+			}),
 		);
 	} else if (app instanceof Hono) {
 		// Global middleware
@@ -337,20 +337,20 @@ function setupMiddlewareRoutes(
 				data: "protected",
 				requestId: ctx.get("requestId"),
 				authenticated: ctx.get("authenticated"),
-			})
+			}),
 		);
 		app.get("/api/data", (ctx) =>
 			ctx.json({
 				data: "api",
 				requestId: ctx.get("requestId"),
 				version: ctx.get("apiVersion"),
-			})
+			}),
 		);
 		app.get("/public/info", (ctx) =>
 			ctx.json({
 				data: "public",
 				requestId: ctx.get("requestId"),
-			})
+			}),
 		);
 	} else if (app instanceof Elysia) {
 		app
@@ -386,19 +386,19 @@ function setupParamRoutes(app: Web | Hono | Elysia) {
 			ctx.json({
 				userId: ctx.params.userId,
 				postId: ctx.params.postId,
-			})
+			}),
 		);
 		app.get("/products/:categoryId/item/:itemId", (ctx) =>
 			ctx.json({
 				categoryId: ctx.params.categoryId,
 				itemId: ctx.params.itemId,
-			})
+			}),
 		);
 		app.get("/api/v1/users/:userId/profile", (ctx) =>
 			ctx.json({
 				userId: ctx.params.userId,
 				profile: {},
-			})
+			}),
 		);
 		app.get("/files/*", (ctx) => ctx.json({ path: ctx.params["*"] }));
 	} else if (app instanceof Hono) {
@@ -407,19 +407,19 @@ function setupParamRoutes(app: Web | Hono | Elysia) {
 			c.json({
 				userId: c.req.param("userId"),
 				postId: c.req.param("postId"),
-			})
+			}),
 		);
 		app.get("/products/:categoryId/item/:itemId", (c) =>
 			c.json({
 				categoryId: c.req.param("categoryId"),
 				itemId: c.req.param("itemId"),
-			})
+			}),
 		);
 		app.get("/api/v1/users/:userId/profile", (c) =>
 			c.json({
 				userId: c.req.param("userId"),
 				profile: {},
-			})
+			}),
 		);
 		app.get("/files/*", (c) => c.json({ path: c.req.param("*") }));
 	} else if (app instanceof Elysia) {

@@ -265,7 +265,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					contentTypes: ["application/json", "text/plain"],
-				})
+				}),
 			);
 			app.post("/test", async (ctx) => {
 				const body = await ctx.req.text();
@@ -322,7 +322,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					contentTypes: ["application/json"],
-				})
+				}),
 			);
 			app.post("/test", (ctx) => ctx.json({ ok: true }));
 
@@ -354,7 +354,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					skip: (ctx) => ctx.req.headers.get("X-Skip-Limit") === "true",
-				})
+				}),
 			);
 			app.post("/test", async (ctx) => {
 				const body = await ctx.req.text();
@@ -414,7 +414,7 @@ describe("Body Limit Middleware", () => {
 						await new Promise((resolve) => setTimeout(resolve, 10));
 						return ctx.get("userId") === "admin";
 					},
-				})
+				}),
 			);
 
 			app.post("/test", async (ctx) => {
@@ -462,7 +462,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					message: "File too large! Please upload a smaller file.",
-				})
+				}),
 			);
 			app.post("/test", (ctx) => ctx.json({ ok: true }));
 
@@ -492,7 +492,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					message: (size, limit) => `Upload failed: ${size} bytes exceeds limit of ${limit} bytes`,
-				})
+				}),
 			);
 			app.post("/test", (ctx) => ctx.json({ ok: true }));
 
@@ -523,7 +523,7 @@ describe("Body Limit Middleware", () => {
 					maxSize: "1kb",
 					statusCode: 400,
 					message: "Bad request: body too large",
-				})
+				}),
 			);
 			app.post("/test", (ctx) => ctx.json({ ok: true }));
 
@@ -555,7 +555,7 @@ describe("Body Limit Middleware", () => {
 				bodyLimit({
 					maxSize: "1kb",
 					includeHeaders: true,
-				})
+				}),
 			);
 			app.post("/test", (ctx) => ctx.json({ ok: true }));
 
@@ -751,7 +751,7 @@ describe("Body Limit Middleware", () => {
 							method: "POST",
 							body,
 							headers: { "Content-Length": body.length.toString() },
-						})
+						}),
 					);
 				}
 

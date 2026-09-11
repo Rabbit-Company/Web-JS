@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 import { createHash, getHashes } from "node:crypto";
 
 /**
@@ -76,7 +78,7 @@ export interface CacheEntry {
  * @param {Context<any>} ctx - The request context
  * @returns {string} The generated cache key
  */
-type KeyGenerator = (ctx: Context<any>) => string;
+export type KeyGenerator = (ctx: Context<any>) => string;
 
 /**
  * Function signature for determining if a response should be cached
@@ -85,7 +87,7 @@ type KeyGenerator = (ctx: Context<any>) => string;
  * @param {Response} res - The response
  * @returns {boolean} True if the response should be cached
  */
-type ShouldCacheFunction = (ctx: Context<any>, res: Response) => boolean;
+export type ShouldCacheFunction = (ctx: Context<any>, res: Response) => boolean;
 
 /**
  * Function signature for determining if ETag should be generated
@@ -94,7 +96,7 @@ type ShouldCacheFunction = (ctx: Context<any>, res: Response) => boolean;
  * @param {Response} res - The response
  * @returns {boolean} True if ETag should be generated
  */
-type ShouldGenerateETagFunction = (ctx: Context<any>, res: Response) => boolean;
+export type ShouldGenerateETagFunction = (ctx: Context<any>, res: Response) => boolean;
 
 /**
  * Cache middleware configuration options
@@ -247,7 +249,7 @@ export class MemoryCache implements CacheStorage {
 	/** Internal storage map */
 	private cache = new Map<string, MemoryCacheItem>();
 	/** Cleanup timers map */
-	private timers = new Map<string, NodeJS.Timeout>();
+	private timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	/**
 	 * Retrieve a cache entry
@@ -673,7 +675,7 @@ function defaultShouldGenerateETag(ctx: Context<any>, res: Response, maxBodySize
  * ```
  */
 export function cache<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	config: CacheConfig = {}
+	config: CacheConfig = {},
 ): Middleware<T, B> {
 	// Apply defaults
 	const options: Required<Omit<CacheConfig, "includePaths">> & Pick<CacheConfig, "includePaths"> = {
@@ -797,6 +799,11 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 			return next();
 		}
 
+		// WebSocket upgrades must reach the upgrade, never a cached HTTP response
+		if (ctx.req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+			return next();
+		}
+
 		// Generate cache key
 		let cacheKey = options.keyGenerator(ctx);
 
@@ -900,7 +907,10 @@ export function cache<T extends Record<string, unknown> = Record<string, unknown
 						})();
 					};
 
-					setImmediate(scheduleRevalidation);
+					// setImmediate where the runtime provides it (Node.js, Bun), otherwise the next timer tick
+					const { setImmediate } = globalThis as { setImmediate?: (callback: () => void) => unknown };
+					if (setImmediate) setImmediate(scheduleRevalidation);
+					else setTimeout(scheduleRevalidation, 0);
 				}
 
 				// Return the stale response immediately
@@ -987,7 +997,7 @@ export function getAvailableHashAlgorithms(): string[] {
  * Redis client interface
  * @interface RedisClient
  */
-interface RedisClient {
+export interface RedisClient {
 	/** Get a value by key */
 	get(key: string): Promise<string | null>;
 	/** Set a value */
@@ -1289,7 +1299,7 @@ export interface CacheUtils {
 	 * @returns {Middleware<T, B>} Invalidation middleware
 	 */
 	invalidate<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-		options: CacheInvalidateOptions
+		options: CacheInvalidateOptions,
 	): Middleware<T, B>;
 
 	/**
@@ -1376,7 +1386,7 @@ export const cacheUtils: CacheUtils = {
 	 * ```
 	 */
 	invalidate<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-		options: CacheInvalidateOptions
+		options: CacheInvalidateOptions,
 	): Middleware<T, B> {
 		return async (ctx, next) => {
 			const response = await next();
@@ -1399,7 +1409,7 @@ export const cacheUtils: CacheUtils = {
 								await redisStorage.deletePattern(redisPattern);
 							}
 							// RegExp patterns not supported by Redis SCAN
-						})
+						}),
 					);
 				}
 			}

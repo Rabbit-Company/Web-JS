@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 import { RateLimiter, Algorithm } from "@rabbit-company/rate-limiter";
 import type { RateLimitConfig, RateLimitResult } from "@rabbit-company/rate-limiter";
 
@@ -182,8 +184,8 @@ export interface RateLimitOptions<T extends Record<string, unknown>, B extends R
 	 * @example
 	 * ```typescript
 	 * const sharedLimiter = createRateLimiter({ max: 100 });
-	 * app.use('/api', rateLimit({ rateLimiter: sharedLimiter }));
-	 * app.use('/auth', rateLimit({ rateLimiter: sharedLimiter }));
+	 * app.use('/api/*', rateLimit({ rateLimiter: sharedLimiter }));
+	 * app.use('/auth/*', rateLimit({ rateLimiter: sharedLimiter }));
 	 * ```
 	 */
 	rateLimiter?: RateLimiter;
@@ -250,7 +252,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>, B extends R
  * }));
  *
  * // More relaxed limit for API endpoints
- * app.use('/api', rateLimit({
+ * app.use('/api/*', rateLimit({
  *   windowMs: 60 * 1000,
  *   max: 100
  * }));
@@ -259,7 +261,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>, B extends R
  * @example
  * Advanced key generation:
  * ```typescript
- * app.use('/api', rateLimit({
+ * app.use('/api/*', rateLimit({
  *   keyGenerator: (ctx) => {
  *     // Rate limit by API key if present, user ID if authenticated, otherwise by IP
  *     const apiKey = ctx.req.headers.get('X-API-Key');
@@ -305,7 +307,7 @@ export interface RateLimitOptions<T extends Record<string, unknown>, B extends R
  * @see {@link createKeyGenerator} for advanced key generation utilities
  */
 export function rateLimit<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: RateLimitOptions<T, B> = {}
+	options: RateLimitOptions<T, B> = {},
 ): Middleware<T, B> {
 	const {
 		// Algorithm configuration
@@ -391,7 +393,7 @@ export function rateLimit<T extends Record<string, unknown> = Record<string, unk
 					window: result.window,
 					reset: new Date(result.reset).toISOString(),
 				},
-				statusCode
+				statusCode,
 			);
 		}
 
@@ -457,9 +459,9 @@ function defaultEndpointGenerator<T extends Record<string, unknown>, B extends R
  * });
  *
  * // Apply same limits to multiple routes
- * app.use('/api/users', rateLimit({ rateLimiter: apiLimiter }));
- * app.use('/api/posts', rateLimit({ rateLimiter: apiLimiter }));
- * app.use('/api/comments', rateLimit({ rateLimiter: apiLimiter }));
+ * app.use('/api/users/*', rateLimit({ rateLimiter: apiLimiter }));
+ * app.use('/api/posts/*', rateLimit({ rateLimiter: apiLimiter }));
+ * app.use('/api/comments/*', rateLimit({ rateLimiter: apiLimiter }));
  * ```
  *
  * @example
@@ -488,8 +490,8 @@ function defaultEndpointGenerator<T extends Record<string, unknown>, B extends R
  * });
  *
  * app.post('/auth/login', rateLimit({ rateLimiter: authLimiter }));
- * app.use('/api', rateLimit({ rateLimiter: apiLimiter }));
- * app.use('/assets', rateLimit({ rateLimiter: assetLimiter }));
+ * app.use('/api/*', rateLimit({ rateLimiter: apiLimiter }));
+ * app.use('/assets/*', rateLimit({ rateLimiter: assetLimiter }));
  * ```
  *
  * @example
@@ -516,7 +518,7 @@ export function createRateLimiter(config?: Partial<RateLimitConfig>): RateLimite
  * @interface KeyGeneratorOptions
  * @template T - Context state type
  */
-interface KeyGeneratorOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
+export interface KeyGeneratorOptions<T extends Record<string, unknown>, B extends Record<string, unknown>> {
 	/**
 	 * Custom function to generate the rate limit key.
 	 * If not provided, defaults to using the client IP address.
@@ -621,7 +623,7 @@ interface KeyGeneratorOptions<T extends Record<string, unknown>, B extends Recor
  * ```
  */
 export function createKeyGenerator<T extends Record<string, unknown>, B extends Record<string, unknown>>(
-	options: KeyGeneratorOptions<T, B>
+	options: KeyGeneratorOptions<T, B>,
 ): (ctx: Context<T, B>) => string {
 	const { custom } = options;
 

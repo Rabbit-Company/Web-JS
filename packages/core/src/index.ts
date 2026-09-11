@@ -13,7 +13,7 @@ import type {
 	Route,
 	Server,
 	WebSocketData,
-} from "./types";
+} from "./types.ts";
 
 /**
  * Runtime detection utilities for identifying the current JavaScript runtime environment.
@@ -92,7 +92,8 @@ const EMPTY_SEARCH_PARAMS = new URLSearchParams();
  *   return ctx.json(user);
  * });
  *
- * app.use('/admin', async (ctx, next) => {
+ * // '/admin/*' covers /admin and every route below it
+ * app.use('/admin/*', async (ctx, next) => {
  *   // Authentication middleware
  *   if (!ctx.get('user')?.isAdmin) {
  *     return ctx.json({ error: 'Unauthorized' }, 401);
@@ -317,6 +318,19 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	}
 
 	/**
+	 * Returns the path to use for the middleware static prefix pre-check.
+	 * Matching ignores empty segments, so repeated slashes are collapsed here too.
+	 * Otherwise "//admin" would skip "/admin/*" middleware while still reaching "/admin" routes.
+	 *
+	 * @param path - The request pathname
+	 * @returns The pathname with repeated slashes collapsed
+	 * @private
+	 */
+	private getPrefixCheckPath(path: string): string {
+		return path.includes("//") ? "/" + this.getPathSegments(path).join("/") : path;
+	}
+
+	/**
 	 * Parses a URL into pathname and search parameters with caching for performance.
 	 * Handles both absolute and relative URLs.
 	 *
@@ -389,7 +403,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *
 	 * @param args - Variable arguments for different middleware registration patterns:
 	 *   - `[handler]` - Global middleware that runs for all requests
-	 *   - `[path, handler]` - Path-specific middleware
+	 *   - `[path, handler]` - Path-specific middleware. Paths match like routes: `/admin` matches only
+	 *     `/admin`, while `/admin/*` matches `/admin` and every path below it
 	 *   - `[method, path, handler]` - Method and path-specific middleware
 	 * @returns The Web instance for method chaining
 	 *
@@ -401,13 +416,14 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *   await next();
 	 * });
 	 *
-	 * // Path-specific middleware
-	 * app.use('/api', async (ctx, next) => {
+	 * // Path-specific middleware: '/api/*' covers /api and every route below it,
+	 * // while '/api' alone would only match /api itself
+	 * app.use('/api/*', async (ctx, next) => {
 	 *   ctx.set('apiVersion', '1.0');
 	 *   await next();
 	 * });
 	 *
-	 * // Method and path-specific middleware
+	 * // Method and path-specific middleware (only POST /users)
 	 * app.use('POST', '/users', async (ctx, next) => {
 	 *   // Validate request body
 	 *   await next();
@@ -427,7 +443,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *
 	 * @example
 	 * ```typescript
-	 * const middlewareId = app.use('/api', authMiddleware);
+	 * const middlewareId = app.addMiddleware('/api/*', authMiddleware);
 	 *
 	 * // Later remove it
 	 * const removed = app.removeMiddleware(middlewareId);
@@ -453,8 +469,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *
 	 * @example
 	 * ```typescript
-	 * // Remove all middleware for a specific path
-	 * const removed = app.removeMiddlewareBy({ path: '/api' });
+	 * // Remove all middleware registered with exactly this path pattern
+	 * const removed = app.removeMiddlewareBy({ path: '/api/*' });
 	 *
 	 * // Remove all POST middleware
 	 * app.removeMiddlewareBy({ method: 'POST' });
@@ -496,8 +512,8 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *   await next();
 	 * });
 	 *
-	 * // Path-specific middleware
-	 * const pathId = app.addMiddleware('/api', async (ctx, next) => {
+	 * // Path-specific middleware for /api and every route below it
+	 * const pathId = app.addMiddleware('/api/*', async (ctx, next) => {
 	 *   ctx.set('apiVersion', '1.0');
 	 *   await next();
 	 * });
@@ -765,8 +781,12 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 
 		const segments = this.getPathSegments(path);
 		if (segments.length === 0) {
-			// Root path "/"
-			const result = root.handlers ? { handlers: root.handlers, params: EMPTY_PARAMS } : null;
+			// Root path "/", also covered by a "/*" route (like "/*" middleware)
+			const result = root.handlers
+				? { handlers: root.handlers, params: EMPTY_PARAMS }
+				: root.wildcardChild?.handlers
+					? { handlers: root.wildcardChild.handlers, params: { "*": "" } }
+					: null;
 			if (this.routeMatchCache.size < 500) {
 				this.routeMatchCache.set(cacheKey, result);
 			}
@@ -813,6 +833,17 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		if (i === segments.length || node.segment === "*") {
 			if (node.handlers) {
 				const result = Object.keys(params).length === 0 ? { handlers: node.handlers, params: EMPTY_PARAMS } : { handlers: node.handlers, params };
+
+				if (this.routeMatchCache.size < 500) {
+					this.routeMatchCache.set(cacheKey, result);
+				}
+				return result;
+			}
+
+			// A trailing wildcard also matches nothing after it ("/admin/*" covers "/admin"), like middleware paths
+			if (i === segments.length && node.wildcardChild?.handlers) {
+				params["*"] = "";
+				const result = { handlers: node.wildcardChild.handlers, params };
 
 				if (this.routeMatchCache.size < 500) {
 					this.routeMatchCache.set(cacheKey, result);
@@ -1313,6 +1344,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 
 			// Full path with middleware processing
 			const methodMiddlewares = this.getMethodMiddlewares(method);
+			const prefixCheckPath = this.getPrefixCheckPath(path);
 			let finalParams = matched.params;
 
 			// Pre-allocate middleware array with estimated size
@@ -1326,7 +1358,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 					const mw = methodMiddlewares[i];
 
 					// Skip expensive match() call if path doesn't start with middleware's static prefix
-					if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+					if (mw.pathPrefix && !prefixCheckPath.startsWith(mw.pathPrefix)) {
 						continue;
 					}
 
@@ -1486,6 +1518,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 
 			// Full path with middleware processing
 			const methodMiddlewares = this.getMethodMiddlewares(method);
+			const prefixCheckPath = this.getPrefixCheckPath(path);
 			let finalParams = matched.params;
 
 			// Pre-allocate middleware array with estimated size
@@ -1499,7 +1532,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 					const mw = methodMiddlewares[i];
 
 					// Skip expensive match() call if path doesn't start with middleware's static prefix
-					if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
+					if (mw.pathPrefix && !prefixCheckPath.startsWith(mw.pathPrefix)) {
 						continue;
 					}
 
@@ -1612,15 +1645,17 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	}
 
 	/**
-	 * Processes middleware for WebSocket upgrade requests to extract client IP and other context.
-	 * This runs middleware (like ipExtract) before upgrading the connection.
+	 * Runs the middleware chain for a WebSocket upgrade request, like for any HTTP request.
+	 * Middleware can prepare the connection (like ipExtract setting the client IP) or refuse the
+	 * upgrade by returning a response instead of calling next() (authentication, rate limits, ...).
+	 * Reaching the end of the chain means the upgrade may proceed next() then resolves to a 101 response.
 	 *
 	 * @param req - The incoming Request object
 	 * @param directIp - The direct connection IP from Bun
-	 * @returns Promise resolving to WebSocket data to attach during upgrade
+	 * @returns The data to attach to the WebSocket, or the response to send instead of upgrading
 	 * @private
 	 */
-	private async processWebSocketUpgrade(req: Request, directIp?: string): Promise<WebSocketData> {
+	private async processWebSocketUpgrade(req: Request, directIp?: string): Promise<{ data: WebSocketData } | { response: Response }> {
 		const method = "GET" as Method; // WebSocket upgrades are always GET
 		const parsedUrl = this.parseUrl(req.url);
 		const path = parsedUrl.pathname;
@@ -1629,44 +1664,52 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		const matched = this.match(method, path);
 		const params = matched?.params || {};
 
-		// Start with direct IP
-		let clientIp = directIp;
+		const ctx = this.createContext(req, params, parsedUrl, directIp);
 
-		// If we have middleware, run them to extract IP (like ipExtract)
-		if (this.middlewares.length > 0) {
-			const methodMiddlewares = this.getMethodMiddlewares(method);
-
-			// Create context for middleware
-			const ctx = this.createContext(req, params, parsedUrl, directIp);
-
-			// Run middleware that matches this path
-			for (const mw of methodMiddlewares) {
-				if (mw.pathPrefix && !path.startsWith(mw.pathPrefix)) {
-					continue;
-				}
-
-				const matchResult = mw.match(path);
-				if (matchResult.matched) {
-					try {
-						// Run the middleware with a no-op next
-						await mw.handler(ctx, async () => {});
-
-						// Check if middleware set clientIp (like ipExtract does)
-						if (ctx.clientIp) {
-							clientIp = ctx.clientIp;
-						}
-					} catch {
-						// Ignore middleware errors for WebSocket upgrade
-					}
-				}
+		// Middleware that apply to this path, in registration order
+		const chain: Middleware<T, B>[] = [];
+		const prefixCheckPath = this.getPrefixCheckPath(path);
+		for (const mw of this.getMethodMiddlewares(method)) {
+			if (mw.pathPrefix && !prefixCheckPath.startsWith(mw.pathPrefix)) {
+				continue;
+			}
+			if (mw.match(path).matched) {
+				chain.push(mw.handler);
 			}
 		}
 
+		let reachedUpgrade = false;
+		let index = 0;
+		const dispatch = async (): Promise<Response | void> => {
+			if (index >= chain.length) {
+				reachedUpgrade = true;
+				return new Response(null, { status: 101 });
+			}
+			return chain[index++](ctx, dispatch);
+		};
+
+		try {
+			const result = await dispatch();
+
+			if (!reachedUpgrade) {
+				// A middleware answered instead of passing the request on
+				return { response: result instanceof Response ? result : new Response("No response returned by middleware", { status: 500 }) };
+			}
+		} catch (err) {
+			// Refuse the upgrade rather than skip a failing middleware (it may be the one doing authentication)
+			if (this.errorHandler) {
+				return { response: await this.errorHandler(err as Error, ctx) };
+			}
+			return { response: new Response("Internal Server Error", { status: 500 }) };
+		}
+
 		return {
-			clientIp,
-			url: path,
-			params,
-			query: parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
+			data: {
+				clientIp: ctx.clientIp || directIp,
+				url: path,
+				params,
+				query: parsedUrl.searchParams || EMPTY_SEARCH_PARAMS,
+			},
 		};
 	}
 
@@ -1693,14 +1736,17 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 		// Extract client IP from Bun's server object
 		const directIp = (server as any)?.requestIP?.(req)?.address;
 
-		// Check if this is a WebSocket upgrade request
-		if (this.bunWebSocket && req.headers.get("upgrade") === "websocket") {
-			// Process middleware to extract IP and other context data
-			const wsData = await this.processWebSocketUpgrade(req, directIp);
+		// Check if this is a WebSocket upgrade request (the header value is case-insensitive)
+		if (this.bunWebSocket && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+			// Run middleware first: they can refuse the upgrade or prepare its data (like the client IP)
+			const upgrade = await this.processWebSocketUpgrade(req, directIp);
+			if ("response" in upgrade) {
+				return upgrade.response;
+			}
 
 			// Try to upgrade to WebSocket with the extracted data
 			const bunServer = server as BunServerInstance;
-			if (bunServer.upgrade(req, { data: wsData })) {
+			if (bunServer.upgrade(req, { data: upgrade.data })) {
 				// Return empty response to indicate upgrade was handled
 				return new Response(null, { status: 101 });
 			}
@@ -1796,15 +1842,25 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 			let body: BodyInit | null = null;
 			if (req.method !== "GET" && req.method !== "HEAD") {
 				// Collect body data
-				const chunks: Buffer[] = [];
+				const chunks: Uint8Array[] = [];
+				let length = 0;
 				await new Promise<void>((resolve, reject) => {
-					req.on("data", (chunk: Buffer) => chunks.push(chunk));
+					req.on("data", (chunk: Uint8Array) => {
+						chunks.push(chunk);
+						length += chunk.byteLength;
+					});
 					req.on("end", () => resolve());
 					req.on("error", reject);
 				});
 
 				if (chunks.length > 0) {
-					body = Buffer.concat(chunks);
+					const merged = new Uint8Array(length);
+					let offset = 0;
+					for (const chunk of chunks) {
+						merged.set(chunk, offset);
+						offset += chunk.byteLength;
+					}
+					body = merged;
 				}
 			}
 
@@ -1871,7 +1927,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *   port: 8080,
 	 *   hostname: '0.0.0.0',
 	 *   onListen: ({ port, hostname, runtime }) => {
-	 *     console.log(`✅ ${runtime} server running at http://${hostname}:${port}`);
+	 *     console.log(`${runtime} server running at http://${hostname}:${port}`);
 	 *   }
 	 * });
 	 *
@@ -1902,6 +1958,19 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	 *       key: Bun.file('./key.pem'),
 	 *       cert: Bun.file('./cert.pem')
 	 *     }
+	 *   }
+	 * });
+	 *
+	 * // With HTTP/2 and HTTP/3 in Bun (experimental, Bun 1.4+)
+	 * await app.listen({
+	 *   port: 443,
+	 *   bun: {
+	 *     tls: {
+	 *       key: Bun.file('./key.pem'),
+	 *       cert: Bun.file('./cert.pem')
+	 *     },
+	 *     http2: true, // negotiated with ALPN on the same TCP port
+	 *     http3: true  // also listen on UDP/443
 	 *   }
 	 * });
 	 *
@@ -1936,7 +2005,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				runtime: "bun",
 				instance: bunServer,
 
-				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+				publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
 					return bunServer.publish(topic, data, compress);
 				},
 
@@ -1987,7 +2056,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				runtime: "deno",
 				instance: denoServer,
 
-				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+				publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
 					return 0;
 				},
 
@@ -2024,7 +2093,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				runtime: "cloudflare-workers",
 				instance: null as any, // No actual server instance in Workers
 
-				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+				publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
 					return 0;
 				},
 
@@ -2102,7 +2171,7 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 				runtime: "node",
 				instance: nodeServer,
 
-				publish: (topic: string, data: string | Bun.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
+				publish: (topic: string, data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, compress?: boolean): number => {
 					return 0;
 				},
 
@@ -2148,6 +2217,9 @@ export class Web<T extends Record<string, unknown> = Record<string, unknown>, B 
 	/**
 	 * Sets up WebSocket handlers for Bun runtime.
 	 * This method must be called before starting the server with listen().
+	 *
+	 * Middleware matching the upgrade request runs first: a middleware that responds instead of
+	 * calling next() (e.g. bearerAuth with a missing token), or throws, refuses the upgrade.
 	 *
 	 * The WebSocket handlers receive typed data via ws.data that includes:
 	 * - clientIp: The real client IP extracted by middleware (like ipExtract)
@@ -2246,7 +2318,10 @@ function getStaticPrefix(path: string): string {
  * // Returns { matched: true, params: { id: "123" } }
  * ```
  */
-function createPathMatcherSegments(segments: string[]): (urlSegments: string[]) => MatchResult {
+function createPathMatcherSegments(patternSegments: string[]): (urlSegments: string[]) => MatchResult {
+	// Like the route trie, "*" matches everything from its position on and later segments are ignored
+	const wildcardIndex = patternSegments.indexOf("*");
+	const segments = wildcardIndex === -1 ? patternSegments : patternSegments.slice(0, wildcardIndex + 1);
 	const segmentCount = segments.length;
 	const hasWildcard = segments[segmentCount - 1] === "*";
 
@@ -2342,4 +2417,4 @@ function joinPaths(...paths: string[]) {
 	return result;
 }
 
-export type * from "./types";
+export type * from "./types.ts";

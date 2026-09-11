@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 
 /**
  * Options to configure the body limit middleware behavior.
@@ -50,7 +52,7 @@ export interface BodyLimitOptions<T extends Record<string, unknown>, B extends R
  * @returns {Middleware<T, B>} - A middleware function for handling body size limits.
  */
 export function bodyLimit<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: BodyLimitOptions<T, B> = {}
+	options: BodyLimitOptions<T, B> = {},
 ): Middleware<T, B> {
 	const opts: BodyLimitOptions<T, B> = {
 		maxSize: "1mb",
@@ -178,7 +180,7 @@ function parseSize(size?: number | string): number {
  */
 function getContentLength<T extends Record<string, unknown>, B extends Record<string, unknown>>(
 	ctx: Context<T, B>,
-	includeHeaders: boolean = false
+	includeHeaders: boolean = false,
 ): number | null {
 	const contentLength = ctx.req.headers.get("Content-Length");
 	let size = contentLength ? parseInt(contentLength, 10) : null;

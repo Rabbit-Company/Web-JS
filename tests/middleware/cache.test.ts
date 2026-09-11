@@ -636,7 +636,7 @@ describe("Cache Middleware", () => {
 			app.use(
 				cache({
 					skipETagContentTypes: ["text/csv", "application/xml"],
-				})
+				}),
 			);
 
 			app.get("/csv", (ctx) => {
@@ -715,7 +715,7 @@ describe("Cache Middleware", () => {
 						const url = new URL(ctx.req.url);
 						return url.pathname.startsWith("/api");
 					},
-				})
+				}),
 			);
 
 			app.get("/api/data", (ctx) => ctx.json({ data: "api" }));
@@ -936,7 +936,7 @@ describe("Cache Middleware", () => {
 			app.use(
 				cache({
 					excludePaths: ["/api/auth", /^\/admin/],
-				})
+				}),
 			);
 
 			app.get("/api/users", (ctx) => {
@@ -983,7 +983,7 @@ describe("Cache Middleware", () => {
 			app.use(
 				cache({
 					includePaths: ["/api", /^\/public/],
-				})
+				}),
 			);
 
 			app.get("/api/users", (ctx) => {
@@ -1038,7 +1038,7 @@ describe("Cache Middleware", () => {
 						const url = new URL(ctx.req.url);
 						return `custom:${ctx.req.method}:${url.pathname}`;
 					},
-				})
+				}),
 			);
 
 			app.get("/test", (ctx) => {
@@ -1158,7 +1158,7 @@ describe("Cache Middleware", () => {
 				cache({
 					respectCacheControl: true,
 					cachePrivate: true,
-				})
+				}),
 			);
 			app.get("/test", (ctx) => {
 				requestCount++;
@@ -1201,7 +1201,7 @@ describe("Cache Middleware", () => {
 					staleWhileRevalidate: true,
 					maxStaleAge: 10, // 10 seconds stale allowed
 					storage: new MemoryCache(), // Explicit storage
-				})
+				}),
 			);
 
 			app.get("/test", async (ctx) => {
@@ -1259,13 +1259,46 @@ describe("Cache Middleware", () => {
 			}
 		});
 
+		test("should revalidate on runtimes without setImmediate", async () => {
+			// Cloudflare Workers don't provide setImmediate
+			const originalSetImmediate = globalThis.setImmediate;
+			delete (globalThis as { setImmediate?: unknown }).setImmediate;
+
+			let requestCount = 0;
+			app.use(cache({ ttl: 1, staleWhileRevalidate: true, maxStaleAge: 10, storage: new MemoryCache() }));
+			app.get("/test", (ctx) => ctx.json({ count: ++requestCount }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				await fetch(`http://localhost:${server.port}/test`);
+				await new Promise((resolve) => setTimeout(resolve, 1100));
+
+				const stale = await fetch(`http://localhost:${server.port}/test`);
+				expect(stale.headers.get("x-cache-status")).toBe("STALE");
+				expect((await stale.json()).count).toBe(1);
+
+				await new Promise((resolve) => setTimeout(resolve, 200));
+
+				const revalidated = await fetch(`http://localhost:${server.port}/test`);
+				expect(revalidated.headers.get("x-cache-status")).toBe("HIT");
+				expect((await revalidated.json()).count).toBe(2);
+			} finally {
+				globalThis.setImmediate = originalSetImmediate;
+				server.stop();
+			}
+		});
+
 		test("should not serve stale content beyond maxStaleAge", async () => {
 			app.use(
 				cache({
 					ttl: 1,
 					staleWhileRevalidate: true,
 					maxStaleAge: 1, // Only 1 second stale allowed
-				})
+				}),
 			);
 
 			app.get("/test", (ctx) => {
@@ -1550,7 +1583,7 @@ describe("Cache Middleware", () => {
 			app.use(
 				cache({
 					varyHeaders: ["authorization"], // Cache per user
-				})
+				}),
 			);
 
 			app.get("/profile", (ctx) => {

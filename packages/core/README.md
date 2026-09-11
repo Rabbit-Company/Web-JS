@@ -16,6 +16,7 @@ A high-performance web framework built for **Bun**, **Deno**, **NodeJS** and **C
 - 🧵 **Async/await** ready
 - 🛡 **Error handling** built-in
 - 🔌 **WebSocket support** with automatic upgrades
+- 🌐 **HTTP/2 & HTTP/3** on Bun (experimental)
 
 ## 📦 Installation
 
@@ -128,7 +129,7 @@ app.get("/users/:id", (ctx) => {
 	return ctx.text(`User ID: ${ctx.params.id}`);
 });
 
-// Wildcard routes
+// Wildcard routes: /files and everything below it (ctx.params["*"] is "" for /files)
 app.get("/files/*", (ctx) => {
 	return ctx.text(`Requested file: ${ctx.params["*"]}`);
 });
@@ -197,6 +198,37 @@ app.get("/room/:roomId", (ctx) => {
 });
 ```
 
+Middleware runs for WebSocket upgrades just like for HTTP requests, so the same `bearerAuth`, `rateLimit` or `ipRestriction` that protects your routes also protects your WebSocket endpoints. The connection is only upgraded when every matching middleware calls `next()`. A middleware that responds instead (for example with `401`), or throws, refuses the upgrade.
+
+```js
+// Only authenticated clients can open /ws connections
+app.use("/ws/*", bearerAuth({ validate: (token) => token === process.env.WS_TOKEN }));
+```
+
+### 🌐 HTTP/2 & HTTP/3 (Bun)
+
+Bun 1.4+ can serve HTTP/2 and HTTP/3 next to HTTP/1.1 from the same `listen()` call. Routes, middleware, request bodies and `ctx.clientIp` behave identically on every protocol. Both are **experimental** in Bun, so don't enable HTTP/3 in production yet.
+
+```js
+await app.listen({
+	port: 443,
+	hostname: "0.0.0.0",
+	bun: {
+		tls: {
+			key: Bun.file("./key.pem"),
+			cert: Bun.file("./cert.pem"),
+		},
+		http2: true, // Negotiated with ALPN on the same TCP port
+		http3: true, // Also listen on UDP/443, advertised to browsers via Alt-Svc
+		// http1: false, // Refuse HTTP/1.x clients (they get 505)
+	},
+});
+```
+
+- `http2` works without `tls` too, for clients that speak HTTP/2 with prior knowledge (h2c).
+- `http3` requires `tls`.
+- WebSockets aren't supported over HTTP/2 or HTTP/3 yet. They keep working over HTTP/1.1, so leave `http1` enabled if you use them.
+
 ### 🔄 Dynamic Route Management
 
 ```js
@@ -234,11 +266,12 @@ app.use(async (ctx, next) => {
 });
 
 // Path-specific middleware (chainable)
-app.use("/admin", adminAuthMiddleware)
-	 .use("POST", "/users", validateUserMiddleware);
+app
+	.use("/admin/*", adminAuthMiddleware) // /admin and everything below it
+	.use("POST", "/users", validateUserMiddleware); // only POST /users
 
 // Middleware with removal capability
-const authId = app.addMiddleware('/admin', (ctx, next) => {
+const authId = app.addMiddleware("/admin/*", async (ctx, next) => {
 	// Authentication logic
 	await next();
 });
@@ -252,13 +285,27 @@ const loggingId = app.addMiddleware(async (ctx, next) => {
 app.removeMiddleware(authId);
 
 // Remove middleware by criteria
-app.removeMiddlewareBy({ method: 'POST' }); // Remove all POST middleware
-app.removeMiddlewareBy({ path: '/admin' }); // Remove all /admin middleware
+app.removeMiddlewareBy({ method: "POST" }); // Remove all POST middleware
+app.removeMiddlewareBy({ path: "/admin/*" }); // Remove all middleware registered for '/admin/*'
 
 // List all middleware
 const middlewares = app.getMiddlewares();
 console.log(middlewares); // [{ id: '...', method: 'POST', path: '/users' }]
 ```
+
+Middleware paths (`use()`) match the same way as routes (`get()`, `post()`, ...): `"/admin"` matches **only** `/admin` itself, not `/admin/users`. End the path with `/*` to cover a path and everything below it:
+
+| Path         | `/admin` | `/admin/users` | `/admin/users/1` | `/administrator` |
+| ------------ | :------: | :------------: | :--------------: | :--------------: |
+| `"/admin"`   |    ✅    |       ❌       |        ❌        |        ❌        |
+| `"/admin/*"` |    ✅    |       ✅       |        ✅        |        ❌        |
+
+Use `/*` for authentication, rate limiting and other middleware that should protect a whole section of your app.
+
+- A trailing slash and repeated slashes are ignored: `/admin/`, `//admin` and `/admin//users` match like `/admin` and `/admin/users`.
+- `*` matches everything from its position on, so anything after it in a path is ignored. Put it at the end.
+- Matching is case-sensitive: `"/admin/*"` doesn't match `/Admin`.
+- When both `"/admin"` and `"/admin/*"` routes exist, `/admin` goes to the exact `"/admin"` route.
 
 ### 🔄 Hot Reloading Example
 

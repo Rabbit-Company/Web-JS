@@ -3,6 +3,12 @@ import { Web } from "../../packages/core/src";
 import { cors } from "../../packages/middleware/src/cors";
 import { basicAuth } from "../../packages/middleware/src/basic-auth";
 import { rateLimit } from "../../packages/middleware/src/rate-limit";
+import { bearerAuth } from "../../packages/middleware/src/bearer-auth";
+import { burrowgateOrigin } from "../../packages/middleware/src/burrowgate";
+import { cache, MemoryCache } from "../../packages/middleware/src/cache";
+import { ipExtract } from "../../packages/middleware/src/ip-extract";
+import { logger } from "../../packages/middleware/src/logger";
+import { connect } from "node:net";
 
 describe("Middleware Integration", () => {
 	let app: Web<{ user?: any; auth?: any }>;
@@ -102,7 +108,7 @@ describe("Middleware Integration", () => {
 				origin: "https://app.example.com",
 				credentials: true,
 				allowHeaders: ["Content-Type", "Authorization"],
-			})
+			}),
 		);
 
 		app.use(
@@ -111,7 +117,7 @@ describe("Middleware Integration", () => {
 				validate: async (username, password) => {
 					return username === "admin" && password === "secret";
 				},
-			})
+			}),
 		);
 		app.post("/api/data", (ctx) => ctx.json({ data: "protected" }));
 
@@ -142,7 +148,7 @@ describe("Middleware Integration", () => {
 					const apiKey = ctx.req.headers.get("X-API-Key");
 					return apiKey || "anonymous";
 				},
-			})
+			}),
 		);
 
 		app.get("/data", (ctx) => ctx.json({ data: "test" }));
@@ -170,7 +176,7 @@ describe("Middleware Integration", () => {
 				users.use(
 					basicAuth({
 						validate: async (u, p) => u === "api" && p === "key",
-					})
+					}),
 				);
 
 				users.get("/", (ctx) => ctx.json({ users: [] }));
@@ -178,7 +184,7 @@ describe("Middleware Integration", () => {
 					ctx.json({
 						id: ctx.params.id,
 						user: ctx.get("user"),
-					})
+					}),
 				);
 			});
 		});
@@ -200,6 +206,108 @@ describe("Middleware Integration", () => {
 		expect(data).toEqual({
 			id: "123",
 			user: { username: "api" },
+		});
+	});
+
+	describe("WebSocket upgrades", () => {
+		// Sends a raw WebSocket handshake and returns the HTTP status line's code
+		function handshakeStatus(port: number, path: string, headers: Record<string, string> = {}) {
+			return new Promise<number>((resolve, reject) => {
+				const extra = Object.entries(headers)
+					.map(([k, v]) => `${k}: ${v}\r\n`)
+					.join("");
+				const socket = connect(port, "127.0.0.1", () => {
+					socket.write(
+						`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+							`Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${extra}\r\n`,
+					);
+				});
+				socket.once("data", (chunk) => {
+					resolve(Number(chunk.toString().split(" ")[1]));
+					socket.destroy();
+				});
+				socket.on("error", reject);
+			});
+		}
+
+		async function listen(opened: unknown[] = []) {
+			app.websocket({
+				open(ws) {
+					opened.push(ws.data);
+				},
+			});
+			const server = await app.listen({ port: 0, hostname: "127.0.0.1" });
+			return { port: server.port, stop: () => server.stop() };
+		}
+
+		it("should require bearer authentication for upgrades", async () => {
+			app.use("/ws/*", bearerAuth({ validate: (token) => token === "valid" }));
+			app.get("/ws", (ctx) => ctx.text("upgrade required", 426));
+			const { port, stop } = await listen();
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(401);
+				expect(await handshakeStatus(port, "/ws", { Authorization: "Bearer wrong" })).toBe(401);
+				expect(await handshakeStatus(port, "/ws", { Authorization: "Bearer valid" })).toBe(101);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should apply rate limits to upgrades", async () => {
+			app.use("/ws/*", rateLimit({ windowMs: 60_000, max: 2 }));
+			const { port, stop } = await listen();
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(101);
+				expect(await handshakeStatus(port, "/ws")).toBe(101);
+				expect(await handshakeStatus(port, "/ws")).toBe(429);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should refuse upgrades that didn't pass through BurrowGate", async () => {
+			app.use("/ws/*", burrowgateOrigin({ secret: "origin-secret" }));
+			const { port, stop } = await listen();
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(403);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should still attach the extracted client IP", async () => {
+			const opened: unknown[] = [];
+			app.use(ipExtract({ trustProxy: true, trustedProxies: ["127.0.0.1", "::1"], trustedHeaders: ["x-real-ip"] }));
+			const { port, stop } = await listen(opened);
+
+			try {
+				expect(await handshakeStatus(port, "/ws", { "X-Real-IP": "203.0.113.50" })).toBe(101);
+				await Bun.sleep(20);
+				expect(opened).toEqual([expect.objectContaining({ clientIp: "203.0.113.50" })]);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should not answer upgrades from the cache or break them with logging", async () => {
+			app.use(logger({ preset: "minimal", logger: { log() {} } as any }));
+			app.use(cache({ storage: new MemoryCache() }));
+			app.get("/ws", (ctx) => ctx.text("upgrade required"));
+			const { port, stop } = await listen();
+
+			try {
+				// A plain GET response for the same path is cached first, with the same headers the cache varies on
+				const headers = { Accept: "*/*", "Accept-Encoding": "gzip" };
+				expect((await fetch(`http://127.0.0.1:${port}/ws`, { headers })).headers.get("x-cache-status")).toBe("MISS");
+				expect((await fetch(`http://127.0.0.1:${port}/ws`, { headers })).headers.get("x-cache-status")).toBe("HIT");
+
+				expect(await handshakeStatus(port, "/ws", headers)).toBe(101);
+			} finally {
+				await stop();
+			}
 		});
 	});
 });

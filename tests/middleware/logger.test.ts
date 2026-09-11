@@ -31,7 +31,7 @@ function createMockContext<T extends Record<string, unknown>>(
 		body?: any;
 		params?: Record<string, string>;
 		query?: Record<string, string>;
-	} = {}
+	} = {},
 ): Context<T> {
 	const { method = "GET", url = "http://localhost:3000/test", headers = {}, body, params = {}, query = {} } = options;
 

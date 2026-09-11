@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { connect } from "node:net";
 import { Web } from "../packages/core/src";
 import type { ServerWebSocket } from "bun";
 
@@ -98,7 +99,7 @@ describe("Web Framework", () => {
 				c.json({
 					category: c.params.category,
 					id: c.params.id,
-				})
+				}),
 			);
 
 			const res = await app.handle(mockRequest("/posts/tech/123"));
@@ -225,7 +226,7 @@ describe("Web Framework", () => {
 			const invalidTokenRes = await app.handle(
 				mockRequest("/api/protected/profile", "GET", {
 					Authorization: "Bearer invalid-token",
-				})
+				}),
 			);
 			expect(invalidTokenRes.status).toBe(401);
 			expect(await invalidTokenRes.json()).toEqual({
@@ -236,7 +237,7 @@ describe("Web Framework", () => {
 			const validRes = await app.handle(
 				mockRequest("/api/protected/profile", "GET", {
 					Authorization: "Bearer valid-token",
-				})
+				}),
 			);
 			expect(validRes.status).toBe(200);
 			expect(await validRes.json()).toEqual({
@@ -1100,7 +1101,7 @@ describe("Web Framework", () => {
 					method: "POST",
 					body: JSON.stringify({ message: "hello" }),
 					headers: { "Content-Type": "application/json" },
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -1121,7 +1122,7 @@ describe("Web Framework", () => {
 				new Request("http://localhost/form", {
 					method: "POST",
 					body: formData,
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -1520,6 +1521,127 @@ describe("Web Framework", () => {
 			expect((await app.handle(mockRequest("/test2", "POST"))).status).toBe(200);
 		});
 	});
+
+	describe("Path Matching", () => {
+		const paths = ["/admin", "/admin/users", "/admin/users/1", "/administrator"];
+
+		// The table documented in the README, for both routes and middleware
+		for (const [pattern, expected] of [
+			["/admin", [true, false, false, false]],
+			["/admin/*", [true, true, true, false]],
+		] as const) {
+			it(`should match "${pattern}" routes as documented`, async () => {
+				const app = new Web();
+				app.get(pattern, (c) => c.text("route"));
+
+				const matched = [];
+				for (const path of paths) matched.push((await app.handle(mockRequest(path))).status === 200);
+				expect(matched).toEqual([...expected]);
+			});
+
+			it(`should match "${pattern}" middleware as documented`, async () => {
+				const app = new Web();
+				app.use(pattern, async (c, next) => {
+					c.header("x-middleware", "ran");
+					return next();
+				});
+				for (const path of paths) app.get(path, (c) => c.text("route"));
+
+				const matched = [];
+				for (const path of paths) matched.push((await app.handle(mockRequest(path))).headers.get("x-middleware") === "ran");
+				expect(matched).toEqual([...expected]);
+			});
+		}
+
+		it("should let a trailing wildcard route match nothing after it", async () => {
+			const app = new Web();
+			app.get("/files/*", (c) => c.json({ rest: c.params["*"] }));
+			app.get("/*", (c) => c.json({ rest: c.params["*"] }));
+
+			expect(await (await app.handle(mockRequest("/files"))).json()).toEqual({ rest: "" });
+			expect(await (await app.handle(mockRequest("/files/"))).json()).toEqual({ rest: "" });
+			expect(await (await app.handle(mockRequest("/files/a/b"))).json()).toEqual({ rest: "a/b" });
+			expect(await (await app.handle(mockRequest("/"))).json()).toEqual({ rest: "" });
+		});
+
+		it("should prefer an exact route over a trailing wildcard", async () => {
+			const app = new Web();
+			app.get("/files", (c) => c.text("exact"));
+			app.get("/files/*", (c) => c.text("wildcard"));
+			app.get("/", (c) => c.text("root"));
+			app.get("/*", (c) => c.text("catch-all"));
+
+			expect(await (await app.handle(mockRequest("/files"))).text()).toBe("exact");
+			expect(await (await app.handle(mockRequest("/files/x"))).text()).toBe("wildcard");
+			expect(await (await app.handle(mockRequest("/"))).text()).toBe("root");
+		});
+
+		it("should match a wildcard in the middle of middleware paths like routes do", async () => {
+			const app = new Web();
+			app.use("/a/*/b", async (c, next) => {
+				c.header("x-middleware", "ran");
+				return next();
+			});
+			app.get("/a/*/b", (c) => c.text("route"));
+
+			for (const path of ["/a/x/b", "/a/x/y", "/a/x"]) {
+				const res = await app.handle(mockRequest(path));
+				expect(res.status).toBe(200);
+				expect(res.headers.get("x-middleware")).toBe("ran");
+			}
+		});
+
+		describe("repeated slashes", () => {
+			const attackPaths = ["//admin", "//admin/users", "///admin/users/1", "/admin//users", "//admin/files/x"];
+
+			function createGuardedApp() {
+				const app = new Web();
+				app.use("/admin/*", async (c, next) => {
+					if (c.req.headers.get("authorization") !== "secret") return c.text("auth required", 401);
+					return next();
+				});
+				app.get("/admin", (c) => c.text("admin"));
+				app.get("/admin/users", (c) => c.text("users"));
+				app.get("/admin/users/:id", (c) => c.text("user"));
+				app.get("/admin/files/*", (c) => c.text("files"));
+				return app;
+			}
+
+			it("should not bypass path middleware through handle()", async () => {
+				const app = createGuardedApp();
+
+				for (const path of attackPaths) {
+					expect((await app.handle(mockRequest(path))).status).toBe(401);
+					expect((await app.handle(mockRequest(path, "GET", { authorization: "secret" }))).status).toBe(200);
+				}
+			});
+
+			it("should not bypass path middleware through a Bun server", async () => {
+				const app = createGuardedApp();
+				const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.handleBun });
+
+				// fetch() collapses repeated slashes, so send the raw request line an attacker would
+				const rawStatus = (path: string) =>
+					new Promise<number>((resolve, reject) => {
+						const socket = connect(server.port!, "127.0.0.1", () => {
+							socket.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+						});
+						let response = "";
+						socket.on("data", (chunk) => (response += chunk.toString()));
+						socket.on("end", () => resolve(Number(response.split(" ")[1])));
+						socket.on("error", reject);
+					});
+
+				try {
+					for (const path of attackPaths) {
+						expect(await rawStatus(path)).toBe(401);
+					}
+				} finally {
+					server.stop(true);
+				}
+			});
+		});
+	});
 });
 
 describe("WebSocket Support", () => {
@@ -1850,7 +1972,7 @@ describe("WebSocket Support", () => {
 					method: "POST",
 					body: JSON.stringify({ message: "Hello everyone!" }),
 					headers: { "Content-Type": "application/json" },
-				})
+				}),
 			);
 
 			expect(broadcastResponse.status).toBe(200);
@@ -1860,6 +1982,109 @@ describe("WebSocket Support", () => {
 				message: "Hello everyone!",
 				clients: 0, // No actual connections in test
 			});
+		});
+	});
+
+	describe("Upgrade Middleware", () => {
+		// Sends a raw WebSocket handshake and returns the HTTP status line's code
+		function handshakeStatus(port: number, path: string, headers: Record<string, string> = {}, upgrade = "websocket") {
+			return new Promise<number>((resolve, reject) => {
+				const extra = Object.entries(headers)
+					.map(([k, v]) => `${k}: ${v}\r\n`)
+					.join("");
+				const socket = connect(port, "127.0.0.1", () => {
+					socket.write(
+						`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: ${upgrade}\r\nConnection: Upgrade\r\n` +
+							`Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${extra}\r\n`,
+					);
+				});
+				socket.once("data", (chunk) => {
+					resolve(Number(chunk.toString().split(" ")[1]));
+					socket.destroy();
+				});
+				socket.on("error", reject);
+			});
+		}
+
+		async function startApp(configure: (app: Web<{ user?: string }>) => void) {
+			const app = new Web<{ user?: string }>();
+			const opened: unknown[] = [];
+			app.websocket({
+				open(ws) {
+					opened.push(ws.data);
+				},
+			});
+			configure(app);
+			app.get("/ws", (c) => c.text("upgrade required", 426));
+			const server = await app.listen({ port: 0, hostname: "127.0.0.1" });
+			return { port: server.port, opened, stop: () => server.stop() };
+		}
+
+		it("should refuse the upgrade when a middleware responds instead of calling next", async () => {
+			const { port, opened, stop } = await startApp((app) => {
+				app.use("/ws/*", async (c, next) => {
+					if (c.req.headers.get("authorization") !== "secret") return c.text("auth required", 401);
+					return next();
+				});
+			});
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(401);
+				expect(await handshakeStatus(port, "/ws", { Authorization: "secret" })).toBe(101);
+				await Bun.sleep(20);
+				expect(opened).toHaveLength(1);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should refuse the upgrade when a middleware throws", async () => {
+			const { port, opened, stop } = await startApp((app) => {
+				app.use(async () => {
+					throw new Error("broken middleware");
+				});
+			});
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(500);
+				await Bun.sleep(20);
+				expect(opened).toHaveLength(0);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should pass data prepared by middleware to the WebSocket", async () => {
+			const { port, opened, stop } = await startApp((app) => {
+				app.use(async (c, next) => {
+					c.clientIp = "203.0.113.7";
+					const res = await next();
+					// Middleware that inspect the result of next() see the upgrade
+					if (res instanceof Response) c.clientIp = `${c.clientIp}|${res.status}`;
+					return res;
+				});
+			});
+
+			try {
+				expect(await handshakeStatus(port, "/ws")).toBe(101);
+				await Bun.sleep(20);
+				expect(opened).toEqual([expect.objectContaining({ clientIp: "203.0.113.7|101", url: "/ws" })]);
+			} finally {
+				await stop();
+			}
+		});
+
+		it("should treat the Upgrade header value case-insensitively", async () => {
+			const { port, stop } = await startApp((app) => {
+				app.use("/ws/*", async (c, next) => (c.req.headers.get("authorization") === "secret" ? next() : c.text("auth required", 401)));
+			});
+
+			try {
+				expect(await handshakeStatus(port, "/ws", {}, "WebSocket")).toBe(401);
+				expect(await handshakeStatus(port, "/ws", { Authorization: "secret" }, "WebSocket")).toBe(101);
+			} finally {
+				await stop();
+			}
 		});
 	});
 

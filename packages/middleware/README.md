@@ -1,6 +1,6 @@
 # 🚀 @rabbit-company/web-middleware
 
-[![NPM Version](https://img.shields.io/npm/v/@rabbit-company/web-middleware)](https://www.npmjs.com/package/web-middleware)
+[![NPM Version](https://img.shields.io/npm/v/@rabbit-company/web-middleware)](https://www.npmjs.com/package/@rabbit-company/web-middleware)
 [![JSR Version](https://jsr.io/badges/@rabbit-company/web-middleware)](https://jsr.io/@rabbit-company/web-middleware)
 [![License](https://img.shields.io/npm/l/@rabbit-company/web-middleware)](LICENSE)
 
@@ -24,7 +24,7 @@ deno add @rabbit-company/web-middleware
 
 ```js
 import { Web } from "@rabbit-company/web";
-import { bearerAuth } from "@rabbit-company/web-middleware/basic-auth";
+import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import { cors } from "@rabbit-company/web-middleware/cors";
 import { logger } from "@rabbit-company/web-middleware/logger";
 import { rateLimit } from "@rabbit-company/web-middleware/rate-limit";
@@ -36,7 +36,7 @@ app.use(
 	logger({
 		preset: "standard", // Use predefined configuration
 		excludePaths: ["/health", "/ping"], // Skip logging for these paths
-	})
+	}),
 );
 
 // Enable CORS
@@ -44,7 +44,7 @@ app.use(
 	cors({
 		origin: ["https://example.com", "https://app.example.com"],
 		credentials: true,
-	})
+	}),
 );
 
 // Add rate limiting
@@ -52,18 +52,19 @@ app.use(
 	rateLimit({
 		windowMs: 15 * 60 * 1000, // 15 minutes
 		max: 100, // limit each IP to 100 requests per windowMs
-	})
+	}),
 );
 
-// Protect API routes with bearer auth
+// Protect /api and every route below it with bearer auth
+// ("/api" alone would only match /api itself, leaving /api/profile unprotected)
 app.use(
-	"/api",
+	"/api/*",
 	bearerAuth({
 		validate: async (token) => {
 			// Your token validation logic
 			return token === "valid-token" ? { id: "user123" } : false;
 		},
-	})
+	}),
 );
 
 app.get("/api/profile", (ctx) => {
@@ -83,6 +84,7 @@ console.log("Server running at http://localhost:3000");
 
 - [**Bearer Auth**](#bearer-auth) - JWT/API token authentication
 - [**Basic Auth**](#basic-auth) - HTTP Basic authentication
+- [**BurrowGate**](#burrowgate) - BurrowGate origin request verification and session assertion authentication
 
 ### 🛡️ Security
 
@@ -104,7 +106,7 @@ console.log("Server running at http://localhost:3000");
 Comprehensive HTTP request/response logging middleware using @rabbit-company/logger.
 
 ```js
-import { logger } from "@rabbit-company/web-middleware/logger";
+import { logger, Levels } from "@rabbit-company/web-middleware/logger";
 
 // Minimal logging (clean output)
 app.use(logger({ preset: "minimal" }));
@@ -132,7 +134,7 @@ app.use(
 		includeRemoteAddress: true,
 		getUserId: (ctx) => ctx.get("user")?.id,
 		metadata: { service: "api", version: "1.0.0" },
-	})
+	}),
 );
 
 // Custom formatting
@@ -146,7 +148,7 @@ app.use(
 			const url = new URL(ctx.req.url);
 			return `← [${requestId}] ${statusCode} ${duration}ms`;
 		},
-	})
+	}),
 );
 ```
 
@@ -193,7 +195,7 @@ app.use(
 		storage: new LRUCache(500),
 		ttl: 600, // 10 minutes
 		hashAlgorithm: "md5", // Faster hash algorithm for ETag generation
-	})
+	}),
 );
 
 // Redis cache for distributed caching
@@ -206,7 +208,7 @@ app.use(
 		ttl: 3600, // 1 hour
 		staleWhileRevalidate: true,
 		maxStaleAge: 86400, // 24 hours
-	})
+	}),
 );
 
 // Advanced configuration
@@ -244,7 +246,7 @@ app.use(
 		// Path filtering
 		excludePaths: ["/api/auth", "/api/admin", /^\/ws/],
 		includePaths: ["/api/public", "/api/products"],
-	})
+	}),
 );
 
 // Conditional requests (ETag support)
@@ -260,11 +262,11 @@ app.use(
 		ttl: 60, // Fresh for 1 minute
 		staleWhileRevalidate: true,
 		maxStaleAge: 3600, // Serve stale for up to 1 hour while revalidating
-	})
+	}),
 );
 
 // Cache invalidation
-import { cacheUtils } from "@rabbit-company/web-middleware";
+import { cacheUtils } from "@rabbit-company/web-middleware/cache";
 
 // Invalidate specific cache keys
 app.post(
@@ -273,7 +275,7 @@ app.post(
 	cacheUtils.invalidate({
 		storage: cache.storage,
 		keys: ["GET:/api/posts", "GET:/api/posts/latest"],
-	})
+	}),
 );
 
 // Pattern-based invalidation (Redis only)
@@ -283,7 +285,7 @@ app.put(
 	cacheUtils.invalidate({
 		storage: redisCache,
 		patterns: ["GET:/api/posts/*", "GET:/api/users/*/posts"],
-	})
+	}),
 );
 
 // Clear entire cache
@@ -371,7 +373,7 @@ app.use(bodyLimit());
 app.use(
 	bodyLimit({
 		maxSize: "5mb", // or 5242880 for bytes
-	})
+	}),
 );
 
 // Different limits for different routes
@@ -385,7 +387,7 @@ app.use(
 		maxSize: "10mb",
 		contentTypes: ["application/json", "application/xml"],
 		message: "JSON/XML payload too large",
-	})
+	}),
 );
 
 // Skip limit for premium users
@@ -396,7 +398,7 @@ app.use(
 			const user = ctx.get("user");
 			return user?.plan === "premium";
 		},
-	})
+	}),
 );
 
 // Custom error handling
@@ -405,7 +407,7 @@ app.use(
 		maxSize: "1mb",
 		message: (size, limit) => `Payload too large: ${(size / 1024).toFixed(2)}KB exceeds ${(limit / 1024).toFixed(2)}KB limit`,
 		statusCode: 400, // Use 400 instead of default 413
-	})
+	}),
 );
 
 // Include headers in size calculation
@@ -413,7 +415,7 @@ app.use(
 	bodyLimit({
 		maxSize: "10kb",
 		includeHeaders: true, // Total request size including headers
-	})
+	}),
 );
 
 // File upload endpoint with strict limit
@@ -429,7 +431,7 @@ app.post(
 		const file = formData.get("document");
 		// Process file...
 		return ctx.json({ success: true });
-	}
+	},
 );
 ```
 
@@ -475,7 +477,7 @@ import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 app.use(
 	bearerAuth({
 		validate: (token) => token === "secret-api-key",
-	})
+	}),
 );
 
 // JWT validation with user data
@@ -496,7 +498,7 @@ app.use(
 		},
 		contextKey: "currentUser", // Access via ctx.get("currentUser")
 		invalidTokenMessage: "Token expired or invalid",
-	})
+	}),
 );
 
 // Database token validation with rate limiting
@@ -527,7 +529,7 @@ app.use(
 		realm: "API",
 		missingTokenMessage: "API key required",
 		invalidTokenMessage: "Invalid or expired API key",
-	})
+	}),
 );
 
 // Protected route example
@@ -564,7 +566,7 @@ app.use(
 			return username === "admin" && password === "secret";
 		},
 		realm: "Admin Panel",
-	})
+	}),
 );
 
 // Database validation with bcrypt
@@ -588,12 +590,12 @@ app.use(
 		},
 		realm: "Restricted Area",
 		contextKey: "authenticatedUser",
-	})
+	}),
 );
 
-// Environment-based credentials
+// Environment-based credentials for /admin and every route below it
 app.use(
-	"/admin",
+	"/admin/*",
 	basicAuth({
 		validate: (username, password) => {
 			const validUsers = {
@@ -604,27 +606,29 @@ app.use(
 			return validUsers[username] === password;
 		},
 		realm: "Administration",
-	})
+	}),
 );
 
 // Role-based access
 const adminAuth = basicAuth({
 	validate: async (username, password, ctx) => {
+		// basicAuth stores { username } under "user" after validation, so keep the role in its own key
 		if (username === "admin" && password === process.env.ADMIN_PASSWORD) {
-			ctx.set("user", { username, role: "admin" });
+			ctx.set("role", "admin");
 			return true;
 		}
 		if (username === "viewer" && password === process.env.VIEWER_PASSWORD) {
-			ctx.set("user", { username, role: "viewer" });
+			ctx.set("role", "viewer");
 			return true;
 		}
 		return false;
 	},
 });
 
-app.use("/admin", adminAuth, async (ctx, next) => {
-	const user = ctx.get("user");
-	if (user.role !== "admin") {
+// Middleware runs in registration order: authenticate first, then check the role
+app.use("/admin/*", adminAuth);
+app.use("/admin/*", async (ctx, next) => {
+	if (ctx.get("role") !== "admin") {
 		return ctx.text("Admin access required", 403);
 	}
 	return next();
@@ -645,6 +649,126 @@ app.use("/admin", adminAuth, async (ctx, next) => {
 - Store passwords hashed (bcrypt, argon2) never in plain text
 - Basic Auth credentials are sent with every request
 
+### BurrowGate
+
+Integration with the [BurrowGate](https://github.com/Rabbit-Company/BurrowGate) reverse proxy, built on [`@rabbit-company/burrowgate-auth`](https://www.npmjs.com/package/@rabbit-company/burrowgate-auth). It provides two middleware:
+
+- `burrowgateOrigin` - for apps **behind** BurrowGate. Verifies that every request actually passed through BurrowGate and sets the real client IP.
+- `burrowgateSession` - for a **separate API backend** called by a browser app protected by BurrowGate's Access List. Verifies the browser's session assertion.
+
+#### Origin Verification
+
+BurrowGate signs every request it proxies with `X-BurrowGate-Signature`, an HMAC over the method, path, session ID, client IP, country, and timestamp. `burrowgateOrigin` recomputes it with the site's origin signing secret (no network call) and rejects requests that reached the app directly or were tampered with.
+
+Because the client IP is covered by the signature, `ctx.clientIp` is set to the verified IP. You don't need `ipExtract`, and `rateLimit`, `ipRestriction`, and `logger` see the real client however your network is laid out.
+
+```js
+import { burrowgateOrigin } from "@rabbit-company/web-middleware/burrowgate";
+
+// Register before anything that reads the request body
+app.use(
+	burrowgateOrigin({
+		secret: process.env.BURROWGATE_ORIGIN_SECRET,
+	}),
+);
+
+app.get("/api/info", (ctx) => {
+	const origin = ctx.get("burrowgateOrigin");
+	return ctx.json({
+		ip: ctx.clientIp, // Verified client IP
+		country: origin.country, // ISO 3166-1 code, "XX" for private, "ZZ" when unresolved
+		sessionId: origin.sessionId,
+		user: origin.authenticatedUser, // Set when "Send authenticated username to upstream" is enabled
+	});
+});
+
+// Log why verification failed (clock skew, wrong secret, ...)
+app.use(
+	burrowgateOrigin({
+		secret: process.env.BURROWGATE_ORIGIN_SECRET,
+		onFailure: (ctx, reason) => {
+			console.warn(`BurrowGate verification failed: ${reason}`);
+			return ctx.json({ error: "Forbidden" }, 403);
+		},
+		// Allow a local health check that doesn't go through BurrowGate
+		skip: (ctx) => new URL(ctx.req.url).pathname === "/health",
+	}),
+);
+```
+
+##### Options:
+
+- `secret`: The site's origin signing secret (required)
+- `maxAgeSeconds`: Allowed clock skew for `X-BurrowGate-Timestamp` (default: 60, 0 disables the check)
+- `contextKey`: Where to store the verified request in context (default: "burrowgateOrigin")
+- `forbiddenMessage`: Error message for rejected requests (default: "Forbidden")
+- `onFailure`: Custom response for rejected requests, receives the failure reason (`"missing-headers"`, `"stale-timestamp"`, `"invalid-signature"`, `"invalid-identity-signature"`)
+- `skip`: Function to conditionally skip verification
+
+#### Session Assertions
+
+The browser app gets a short-lived assertion from BurrowGate (use `BrowserSessionAssertionClient` from `@rabbit-company/burrowgate-auth`) and sends it in `X-BurrowGate-Session-Assertion`. `burrowgateSession` introspects it with BurrowGate using the server-only verification token.
+
+```js
+import { burrowgateSession } from "@rabbit-company/web-middleware/burrowgate";
+import { cors } from "@rabbit-company/web-middleware/cors";
+
+app.use(
+	cors({
+		origin: "https://app.example.com",
+		allowHeaders: ["Content-Type", "X-BurrowGate-Session-Assertion"],
+	}),
+);
+
+// "/api/*" covers /api and every route below it ("/api" alone only matches /api itself)
+app.use(
+	"/api/*",
+	burrowgateSession({
+		client: {
+			baseUrl: "https://app.example.com",
+			siteId: "site_frontend",
+			verificationToken: process.env.BURROWGATE_SESSION_VERIFICATION_TOKEN,
+			cacheTtlMs: 5_000,
+		},
+	}),
+);
+
+app.get("/api/me", (ctx) => {
+	const session = ctx.get("burrowgateSession");
+	return ctx.json({ id: session.user.id, username: session.user.username });
+});
+
+// Share one client (and its introspection cache) between routes
+import { BurrowGateClient } from "@rabbit-company/web-middleware/burrowgate";
+
+const client = new BurrowGateClient({ baseUrl, siteId, verificationToken });
+app.use("/api/*", burrowgateSession({ client }));
+app.use("/public/*", burrowgateSession({ client, optional: true }));
+```
+
+| Situation                                | Response                                                 |
+| ---------------------------------------- | -------------------------------------------------------- |
+| Active session                           | Continues, session stored in context                     |
+| Missing, expired, logged-out, revoked    | `401` (continues without a session when `optional`)      |
+| BurrowGate unreachable or token rejected | `503` (also when `optional`, never treated as anonymous) |
+
+##### Options:
+
+- `client`: A `BurrowGateClient` instance or its options (required)
+- `headerName`: Header carrying the assertion (default: "x-burrowgate-session-assertion")
+- `optional`: Continue without a session instead of responding with 401 (default: false)
+- `contextKey`: Where to store the session in context (default: "burrowgateSession")
+- `unauthorizedMessage`: Error message for a missing or inactive session (default: "Authentication required")
+- `unavailableMessage`: Error message when BurrowGate cannot be reached (default: "Authentication service unavailable")
+- `onError`: Called with the error when introspection fails, for logging
+- `skip`: Function to conditionally skip authentication
+
+#### Security Notes:
+
+- Keep the origin signing secret and the verification token server-side only
+- Successful introspections are cached for 5 seconds by default, so a logout or revocation can take that long to take effect
+- `accessMode` and `verified` on the origin result are informational: BurrowGate doesn't cover them with the signature
+
 ### CORS
 
 Configure Cross-Origin Resource Sharing.
@@ -660,7 +784,7 @@ app.use(
 		allowHeaders: ["Content-Type", "Authorization"],
 		exposeHeaders: ["X-Total-Count"],
 		maxAge: 86400, // 24 hours
-	})
+	}),
 );
 
 // Dynamic origin validation
@@ -669,7 +793,7 @@ app.use(
 		origin: (origin) => {
 			return origin.endsWith(".example.com");
 		},
-	})
+	}),
 );
 ```
 
@@ -698,7 +822,7 @@ app.use(
 		max: 100, // 100 requests per window
 		message: "Too many requests, please try again later.",
 		headers: true, // Include rate limit headers in response
-	})
+	}),
 );
 
 // Sliding Window - More accurate, prevents bursts at window boundaries
@@ -709,7 +833,7 @@ app.use(
 		max: 60, // 60 requests per minute
 		precision: 100, // 100ms precision for accuracy
 		headers: true,
-	})
+	}),
 );
 
 // Token Bucket - Allows controlled bursts
@@ -719,7 +843,7 @@ app.use(
 		max: 20, // Bucket capacity (burst size)
 		refillRate: 5, // Add 5 tokens per interval
 		refillInterval: 1000, // Refill every second (5 req/sec sustained)
-	})
+	}),
 );
 
 // Different limits for different endpoints
@@ -735,19 +859,20 @@ app.post(
 			const ip = ctx.req.headers.get("x-forwarded-for") || "unknown";
 			return `${ip}:${username}`;
 		},
-	})
+	}),
 );
 
-// Shared rate limiter across routes
+// Same limits for several route groups. Each method + path keeps its own counter;
+// pass endpointGenerator: () => "api" to share one budget across all of them instead
 const apiLimiter = createRateLimiter({
 	algorithm: Algorithm.SLIDING_WINDOW,
 	window: 60 * 1000,
 	max: 100,
 });
 
-app.use("/api/users", rateLimit({ rateLimiter: apiLimiter }));
-app.use("/api/posts", rateLimit({ rateLimiter: apiLimiter }));
-app.use("/api/comments", rateLimit({ rateLimiter: apiLimiter }));
+app.use("/api/users/*", rateLimit({ rateLimiter: apiLimiter }));
+app.use("/api/posts/*", rateLimit({ rateLimiter: apiLimiter }));
+app.use("/api/comments/*", rateLimit({ rateLimiter: apiLimiter }));
 
 // Skip rate limiting for certain users
 app.use(
@@ -761,11 +886,11 @@ app.use(
 			const apiKey = ctx.req.headers.get("x-api-key");
 			return apiKey === process.env.INTERNAL_API_KEY;
 		},
-	})
+	}),
 );
 
 // Custom key generation strategies
-import { createKeyGenerator } from "@rabbit-company/web-middleware";
+import { createKeyGenerator } from "@rabbit-company/web-middleware/rate-limit";
 
 const keyGen = createKeyGenerator({
 	custom: (ctx) => {
@@ -779,7 +904,7 @@ app.use(
 	rateLimit({
 		keyGenerator: keyGen,
 		max: 1000, // Higher limit for authenticated users
-	})
+	}),
 );
 
 // Advanced configuration with cleanup
@@ -797,7 +922,7 @@ app.use(
 			const parts = url.pathname.split("/");
 			return `${ctx.req.method}:/${parts[1]}/${parts[2]}/*`;
 		},
-	})
+	}),
 );
 
 // Get rate limiter statistics
@@ -843,7 +968,7 @@ console.log(`Active rate limits: ${limiter.getSize()}`);
 Securely extract client IP addresses from requests, handling various proxy configurations and preventing IP spoofing attacks.
 
 ```js
-import { ipExtract, getClientIp } from "@rabbit-company/web-middleware/ip-extract";
+import { ipExtract, getClientIp, IP_EXTRACTION_PRESETS } from "@rabbit-company/web-middleware/ip-extract";
 
 // Direct connection (no proxy)
 app.use(ipExtract("direct"));
@@ -857,6 +982,10 @@ app.use(ipExtract("aws"));
 // Behind nginx reverse proxy
 app.use(ipExtract("nginx"));
 
+// Behind BurrowGate, only trusting headers from the BurrowGate host
+// (or use the burrowgateOrigin middleware, which verifies the signed IP)
+app.use(ipExtract({ ...IP_EXTRACTION_PRESETS.burrowgate, trustedProxies: ["10.0.0.5"] }));
+
 // Custom configuration
 app.use(
 	ipExtract({
@@ -865,7 +994,7 @@ app.use(
 		trustedHeaders: ["x-real-ip", "x-forwarded-for"],
 		maxProxyChain: 3,
 		logWarnings: true,
-	})
+	}),
 );
 
 // Access the extracted IP
@@ -883,7 +1012,7 @@ app.use(ipExtract("cloudflare"));
 app.use(
 	rateLimit({
 		keyGenerator: (ctx) => getClientIp(ctx) || "unknown",
-	})
+	}),
 );
 
 // Logging with real IPs
@@ -891,19 +1020,14 @@ app.use(ipExtract("nginx"));
 app.use(
 	logger({
 		getUserId: (ctx) => getClientIp(ctx),
-	})
+	}),
 );
 
-// IP-based access control
-const ipWhitelist = ["192.168.1.0/24", "10.0.0.0/8"];
+// IP-based access control for /admin and every route below it
+import { ipRestriction } from "@rabbit-company/web-middleware/ip-restriction";
 
-app.use("/admin", ipExtract("direct"), (ctx, next) => {
-	const ip = getClientIp(ctx);
-	if (!ip || !isIpInWhitelist(ip, ipWhitelist)) {
-		return ctx.text("Access denied", 403);
-	}
-	return next();
-});
+app.use("/admin/*", ipExtract("direct"));
+app.use("/admin/*", ipRestriction({ mode: "whitelist", ips: ["192.168.1.0/24", "10.0.0.0/8"] }));
 
 // Development mode (trusts all headers - NOT for production!)
 if (process.env.NODE_ENV === "development") {
@@ -920,6 +1044,7 @@ if (process.env.NODE_ENV === "development") {
 - `"azure"` - Behind Azure Application Gateway
 - `"vercel"` - Behind Vercel's edge network
 - `"nginx"` - Behind nginx reverse proxy
+- `"burrowgate"` - Behind BurrowGate (combine with `trustedProxies`, or prefer [`burrowgateOrigin`](#burrowgate))
 - `"development"` - Trusts all headers (NEVER use in production!)
 
 #### Options:
@@ -980,8 +1105,8 @@ app.use(ipRestriction({
   ips: ["203.0.113.0/24"]
 }));
 
-// Protect admin routes
-app.use("/admin", ipRestriction({
+// Protect /admin and every route below it
+app.use("/admin/*", ipRestriction({
   mode: "whitelist",
   ips: ["10.0.0.0/8"],
   message: (ip) => `Access denied for ${ip}. Admin panel is restricted.`,
@@ -1093,6 +1218,7 @@ app.use(ipRestriction({
 ## 📦 Dependencies
 
 - `@rabbit-company/web` - Core web framework (peer dependency)
+- `@rabbit-company/burrowgate-auth` - BurrowGate origin verification and session introspection
 - `@rabbit-company/logger` - Flexible logging library with multiple transports
 - `@rabbit-company/rate-limiter` - High-performance rate limiting
 

@@ -20,7 +20,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected resource"));
@@ -40,7 +40,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected resource"));
@@ -48,7 +48,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Basic dXNlcjpwYXNz", // Wrong scheme
-				})
+				}),
 			);
 
 			expect(res.status).toBe(401);
@@ -64,7 +64,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected resource"));
@@ -72,7 +72,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Bearer   ", // Empty/whitespace token
-				})
+				}),
 			);
 
 			expect(res.status).toBe(401);
@@ -88,7 +88,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected resource"));
@@ -96,7 +96,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Bearer invalid-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(401);
@@ -112,7 +112,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected resource"));
@@ -120,7 +120,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Bearer valid-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -135,7 +135,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/user", (c) => c.json(c.get("user")));
@@ -143,7 +143,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/user", "GET", {
 					Authorization: "Bearer valid-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -161,7 +161,7 @@ describe("Bearer Authentication Middleware", () => {
 						}
 						return false;
 					},
-				})
+				}),
 			);
 
 			app.get("/profile", (c) => c.json(c.get("user")));
@@ -169,7 +169,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/profile", "GET", {
 					Authorization: "Bearer user-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -187,7 +187,7 @@ describe("Bearer Authentication Middleware", () => {
 				bearerAuth({
 					validate: (token) => (token === "valid-token" ? { id: "123" } : false),
 					contextKey: "currentUser",
-				})
+				}),
 			);
 
 			app.get("/me", (c) => c.json(c.get("currentUser")));
@@ -195,7 +195,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/me", "GET", {
 					Authorization: "Bearer valid-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -220,7 +220,7 @@ describe("Bearer Authentication Middleware", () => {
 						await new Promise((resolve) => setTimeout(resolve, 10));
 						return mockDatabase[token as keyof typeof mockDatabase] || false;
 					},
-				})
+				}),
 			);
 
 			app.get("/data", (c) => c.json(c.get("user")));
@@ -229,7 +229,7 @@ describe("Bearer Authentication Middleware", () => {
 			const validRes = await app.handle(
 				mockRequest("/data", "GET", {
 					Authorization: "Bearer api-key-123",
-				})
+				}),
 			);
 
 			expect(validRes.status).toBe(200);
@@ -242,7 +242,7 @@ describe("Bearer Authentication Middleware", () => {
 			const invalidRes = await app.handle(
 				mockRequest("/data", "GET", {
 					Authorization: "Bearer invalid-key",
-				})
+				}),
 			);
 
 			expect(invalidRes.status).toBe(401);
@@ -259,7 +259,7 @@ describe("Bearer Authentication Middleware", () => {
 						}
 						return token === "valid-token";
 					},
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected"));
@@ -267,7 +267,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Bearer error-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(500);
@@ -285,7 +285,7 @@ describe("Bearer Authentication Middleware", () => {
 				bearerAuth({
 					validate: () => false,
 					skip: (ctx) => ctx.req.headers.get("X-Skip-Auth") === "true",
-				})
+				}),
 			);
 			app.get("/", async (ctx) => {
 				return ctx.json({ success: true });
@@ -346,7 +346,7 @@ describe("Bearer Authentication Middleware", () => {
 							return false;
 						}
 					},
-				})
+				}),
 			);
 
 			app.get("/profile", (c) => c.json(c.get("user")));
@@ -354,7 +354,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/profile", "GET", {
 					Authorization: "Bearer valid.jwt.token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -372,7 +372,7 @@ describe("Bearer Authentication Middleware", () => {
 				bearerAuth({
 					validate: (token) => token === "valid-token",
 					scheme: "Token",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected"));
@@ -390,7 +390,7 @@ describe("Bearer Authentication Middleware", () => {
 				bearerAuth({
 					validate: (token) => token === "valid-token",
 					realm: "API",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected"));
@@ -409,7 +409,7 @@ describe("Bearer Authentication Middleware", () => {
 					validate: (token) => token === "valid-token",
 					missingTokenMessage: "API key required",
 					invalidTokenMessage: "API key is invalid or expired",
-				})
+				}),
 			);
 
 			app.get("/protected", (c) => c.text("Protected"));
@@ -424,7 +424,7 @@ describe("Bearer Authentication Middleware", () => {
 			const invalidRes = await app.handle(
 				mockRequest("/protected", "GET", {
 					Authorization: "Bearer wrong-token",
-				})
+				}),
 			);
 			expect(await invalidRes.json()).toEqual({
 				error: "API key is invalid or expired",
@@ -452,7 +452,7 @@ describe("Bearer Authentication Middleware", () => {
 						}
 						return false;
 					},
-				})
+				}),
 			);
 
 			app.get("/info", (c) => c.json(c.get("user")));
@@ -461,7 +461,7 @@ describe("Bearer Authentication Middleware", () => {
 				mockRequest("/info", "GET", {
 					Authorization: "Bearer valid-token",
 					"User-Agent": "TestAgent/1.0",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -489,7 +489,7 @@ describe("Bearer Authentication Middleware", () => {
 						}
 						return false;
 					},
-				})
+				}),
 			);
 
 			app.get("/admin/dashboard", (c) => {
@@ -510,7 +510,7 @@ describe("Bearer Authentication Middleware", () => {
 			const authRes = await app.handle(
 				mockRequest("/admin/dashboard", "GET", {
 					Authorization: "Bearer admin-token",
-				})
+				}),
 			);
 			expect(authRes.status).toBe(200);
 			expect(await authRes.json()).toEqual({
@@ -535,7 +535,7 @@ describe("Bearer Authentication Middleware", () => {
 						return false;
 					},
 					contextKey: "user",
-				})
+				}),
 			);
 
 			// Admin routes with admin token auth
@@ -549,7 +549,7 @@ describe("Bearer Authentication Middleware", () => {
 						return false;
 					},
 					contextKey: "user",
-				})
+				}),
 			);
 
 			app.get("/api/data", (c) => c.json(c.get("user")));
@@ -559,7 +559,7 @@ describe("Bearer Authentication Middleware", () => {
 			const apiRes = await app.handle(
 				mockRequest("/api/data", "GET", {
 					Authorization: "Bearer api-key-123",
-				})
+				}),
 			);
 			expect(await apiRes.json()).toEqual({
 				type: "api",
@@ -570,7 +570,7 @@ describe("Bearer Authentication Middleware", () => {
 			const adminRes = await app.handle(
 				mockRequest("/admin/settings", "GET", {
 					Authorization: "Bearer admin-secret",
-				})
+				}),
 			);
 			expect(await adminRes.json()).toEqual({
 				type: "admin",
@@ -581,7 +581,7 @@ describe("Bearer Authentication Middleware", () => {
 			const wrongTokenRes = await app.handle(
 				mockRequest("/api/data", "GET", {
 					Authorization: "Bearer admin-secret",
-				})
+				}),
 			);
 			expect(wrongTokenRes.status).toBe(401);
 		});
@@ -601,7 +601,7 @@ describe("Bearer Authentication Middleware", () => {
 						}
 						return false;
 					},
-				})
+				}),
 			);
 
 			protectedApi.get("/profile", (c) => {
@@ -622,7 +622,7 @@ describe("Bearer Authentication Middleware", () => {
 			const authorizedRes = await app.handle(
 				mockRequest("/api/v1/profile", "GET", {
 					Authorization: "Bearer api-token",
-				})
+				}),
 			);
 			expect(authorizedRes.status).toBe(200);
 			expect(await authorizedRes.json()).toEqual({
@@ -641,7 +641,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === specialToken,
-				})
+				}),
 			);
 
 			app.get("/test", (c) => c.text("Success"));
@@ -649,7 +649,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/test", "GET", {
 					Authorization: `Bearer ${specialToken}`,
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -664,7 +664,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === longToken,
-				})
+				}),
 			);
 
 			app.get("/test", (c) => c.text("Success"));
@@ -672,7 +672,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/test", "GET", {
 					Authorization: `Bearer ${longToken}`,
-				})
+				}),
 			);
 
 			expect(res.status).toBe(200);
@@ -685,7 +685,7 @@ describe("Bearer Authentication Middleware", () => {
 			app.use(
 				bearerAuth({
 					validate: (token) => token === "valid-token",
-				})
+				}),
 			);
 
 			app.get("/test", (c) => c.text("Success"));
@@ -694,7 +694,7 @@ describe("Bearer Authentication Middleware", () => {
 			const res = await app.handle(
 				mockRequest("/test", "GET", {
 					Authorization: "bearer valid-token",
-				})
+				}),
 			);
 
 			expect(res.status).toBe(401);

@@ -24,7 +24,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.100", "10.0.0.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -39,7 +39,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.100", "10.0.0.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -54,7 +54,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "whitelist",
 					ips: ["192.168.1.100"],
 					message: "Not allowed",
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -70,7 +70,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.0/24", "10.0.0.0/8"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -84,7 +84,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.0/24", "10.0.0.0/8"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -98,7 +98,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.0/24", "10.0.0.0/8"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -114,7 +114,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "blacklist",
 					ips: ["192.168.1.100", "10.0.0.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -128,7 +128,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "blacklist",
 					ips: ["192.168.1.100", "10.0.0.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -142,7 +142,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "blacklist",
 					ips: ["192.168.1.100"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -158,7 +158,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "blacklist",
 					ips: ["192.168.1.0/24"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -172,7 +172,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "blacklist",
 					ips: ["192.168.1.0/24"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -189,7 +189,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["::1", "2001:db8::1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -203,7 +203,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["::1", "2001:db8::1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -217,7 +217,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["::1", "2001:db8::1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -232,7 +232,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["2001:db8::/32"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -246,12 +246,31 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["2001:db8::/32"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
 			const res2 = await app.handle(new Request("http://localhost/"));
 			expect(res2.status).toBe(403);
+		});
+
+		it("should match CIDR ranges by value, including non-nibble prefixes and /0", async () => {
+			const statusFor = async (ip: string, ips: string[]) => {
+				const app = new Web();
+				app.use(setClientIp(ip));
+				app.use(ipRestriction({ mode: "whitelist", ips }));
+				app.get("/", (ctx) => ctx.text("OK"));
+				return (await app.handle(new Request("http://localhost/"))).status;
+			};
+
+			// 2a06:98c0::/29 covers 2a06:98c0:: through 2a06:98c7:ffff:...
+			expect(await statusFor("2a06:98c7:ffff::1", ["2a06:98c0::/29"])).toBe(200);
+			expect(await statusFor("2a06:98c8::1", ["2a06:98c0::/29"])).toBe(403);
+			// Shares leading characters with the range but is outside it
+			expect(await statusFor("2001:db80::1", ["2001:db8::/32"])).toBe(403);
+			// /0 covers every address of its family
+			expect(await statusFor("203.0.113.9", ["0.0.0.0/0"])).toBe(200);
+			expect(await statusFor("2001:db8::9", ["::/0"])).toBe(200);
 		});
 
 		it("should handle IPv4-mapped IPv6 addresses", async () => {
@@ -260,7 +279,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -277,7 +296,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "blacklist",
 					ips: ["192.168.1.100"],
 					message: "Your IP is banned",
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -293,7 +312,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "blacklist",
 					ips: ["192.168.1.100"],
 					message: (ip) => `IP ${ip} is not allowed`,
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -309,7 +328,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "blacklist",
 					ips: ["192.168.1.100"],
 					statusCode: 401,
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -326,7 +345,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "blacklist",
 					ips: ["192.168.1.100"],
 					skip: (ctx) => ctx.req.headers.get("x-admin") === "true",
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -353,7 +372,7 @@ describe("IP Restriction Middleware", () => {
 						await new Promise((resolve) => setTimeout(resolve, 10));
 						return ctx.req.headers.get("x-admin") === "true";
 					},
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -374,7 +393,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "whitelist",
 					ips: ["192.168.1.100"],
 					setHeader: true,
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -389,7 +408,7 @@ describe("IP Restriction Middleware", () => {
 					mode: "whitelist",
 					ips: ["192.168.1.100"],
 					setHeader: true,
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -405,7 +424,7 @@ describe("IP Restriction Middleware", () => {
 					ips: ["192.168.1.100"],
 					setHeader: true,
 					headerName: "X-Access-Status",
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -425,7 +444,7 @@ describe("IP Restriction Middleware", () => {
 					ips: ["192.168.1.100"],
 					logDenied: true,
 					logger: (message) => logs.push(message),
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -445,7 +464,7 @@ describe("IP Restriction Middleware", () => {
 					ips: ["192.168.1.100"],
 					logDenied: false,
 					logger: (message) => logs.push(message),
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -462,7 +481,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.100"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -478,7 +497,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: [],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 
@@ -494,7 +513,7 @@ describe("IP Restriction Middleware", () => {
 				ipRestriction({
 					mode: "whitelist",
 					ips: ["192.168.1.1"],
-				})
+				}),
 			);
 			app.get("/", (ctx) => ctx.text("OK"));
 

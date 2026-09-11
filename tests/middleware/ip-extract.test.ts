@@ -494,6 +494,123 @@ describe("IP Extract Middleware", () => {
 		});
 	});
 
+	describe("Trusted Proxy Ranges", () => {
+		// Runs the middleware for a connection from `directIp`, which a local test server can't simulate
+		async function extractFrom(middleware: ReturnType<typeof ipExtract>, directIp: string, headers: Record<string, string>) {
+			const ctx = { clientIp: directIp, req: new Request("http://localhost/", { headers }) } as any;
+			await middleware(ctx, async () => {});
+			return ctx.clientIp as string;
+		}
+
+		test("should trust every Cloudflare IPv6 range, including non-nibble prefixes", async () => {
+			const middleware = ipExtract("cloudflare");
+
+			for (const edge of ["2400:cb00:2049::1", "2606:4700:10::6816:1", "2a06:98c0:3600::103", "2a06:98c7:ffff::1", "2c0f:f248::1"]) {
+				expect(await extractFrom(middleware, edge, { "cf-connecting-ip": "198.51.100.66" })).toBe("198.51.100.66");
+			}
+		});
+
+		test("should not trust IPv6 addresses that only look like a Cloudflare range", async () => {
+			const middleware = ipExtract("cloudflare");
+
+			// 2400:cb0f::/32 and 2606:470a::/32 share leading characters with Cloudflare ranges; 2a06:98c8:: is just outside the /29
+			for (const outsider of ["2400:cb0f::1", "2606:470a::1", "2a06:98c8::1"]) {
+				expect(await extractFrom(middleware, outsider, { "cf-connecting-ip": "198.51.100.66" })).toBe(outsider);
+			}
+		});
+
+		test("should compare exact IPv6 proxy entries by value", async () => {
+			const middleware = ipExtract({ trustProxy: true, trustedProxies: ["2001:db8::10"], trustedHeaders: ["x-real-ip"] });
+
+			expect(await extractFrom(middleware, "2001:DB8:0:0:0:0:0:10", { "x-real-ip": "203.0.113.5" })).toBe("203.0.113.5");
+			expect(await extractFrom(middleware, "2001:db8::11", { "x-real-ip": "203.0.113.5" })).toBe("2001:db8::11");
+		});
+
+		test("should support /0 and reject malformed prefixes", async () => {
+			const everyone = ipExtract({ trustProxy: true, trustedProxies: ["0.0.0.0/0", "::/0"], trustedHeaders: ["x-real-ip"] });
+			expect(await extractFrom(everyone, "192.0.2.1", { "x-real-ip": "203.0.113.5" })).toBe("203.0.113.5");
+			expect(await extractFrom(everyone, "2001:db8::1", { "x-real-ip": "203.0.113.5" })).toBe("203.0.113.5");
+
+			// A missing or invalid prefix must not be read as /0
+			const malformed = ipExtract({ trustProxy: true, trustedProxies: ["10.0.0.0/", "10.0.0.0/abc", "2001:db8::/129"], trustedHeaders: ["x-real-ip"] });
+			expect(await extractFrom(malformed, "192.0.2.1", { "x-real-ip": "203.0.113.5" })).toBe("192.0.2.1");
+			expect(await extractFrom(malformed, "2001:db8::1", { "x-real-ip": "203.0.113.5" })).toBe("2001:db8::1");
+		});
+	});
+
+	describe("BurrowGate Preset", () => {
+		test("should prefer x-burrowgate-client-ip", async () => {
+			app.use(ipExtract("burrowgate"));
+			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const response = await fetch(`http://localhost:${server.port}/`, {
+					headers: {
+						"x-burrowgate-client-ip": "203.0.113.7",
+						"x-real-ip": "198.51.100.1",
+						"x-forwarded-for": "192.0.2.1",
+					},
+				});
+
+				const data = await response.json();
+				expect(data.ip).toBe("203.0.113.7");
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should fall back to x-real-ip", async () => {
+			app.use(ipExtract("burrowgate"));
+			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const response = await fetch(`http://localhost:${server.port}/`, {
+					headers: {
+						"x-real-ip": "2001:db8::1",
+					},
+				});
+
+				const data = await response.json();
+				expect(data.ip).toBe("2001:db8::1");
+			} finally {
+				server.stop();
+			}
+		});
+
+		test("should ignore headers when the request is not from a trusted BurrowGate host", async () => {
+			app.use(ipExtract({ ...IP_EXTRACTION_PRESETS.burrowgate, trustedProxies: ["10.0.0.5"] }));
+			app.get("/", (ctx) => ctx.json({ ip: ctx.clientIp }));
+
+			const server = Bun.serve({
+				port: 0,
+				fetch: app.handleBun,
+			});
+
+			try {
+				const response = await fetch(`http://localhost:${server.port}/`, {
+					headers: {
+						"x-burrowgate-client-ip": "203.0.113.7",
+					},
+				});
+
+				const data = await response.json();
+				expect(data.ip).toMatch(/^(127\.0\.0\.1|::1)/);
+			} finally {
+				server.stop();
+			}
+		});
+	});
+
 	describe("Helper Functions", () => {
 		test("getClientIp should return IP from context", async () => {
 			app.use(

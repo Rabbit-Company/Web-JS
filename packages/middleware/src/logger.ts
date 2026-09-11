@@ -1,4 +1,6 @@
 import type { Context, Middleware } from "@rabbit-company/web";
+// Re-exported for compatibility with earlier releases; prefer importing these from "@rabbit-company/web"
+export type { Context, Middleware, Next } from "@rabbit-company/web";
 import { Logger, Levels, ConsoleTransport } from "@rabbit-company/logger";
 
 /**
@@ -211,7 +213,7 @@ export interface LoggerOptions<T extends Record<string, unknown>, B extends Reco
  * ```
  */
 export function logger<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	options: LoggerOptions<T, B> = {}
+	options: LoggerOptions<T, B> = {},
 ): Middleware<T, B> {
 	// Apply preset configurations
 	const presetConfig = getPresetConfiguration<T, B>(options.preset);
@@ -443,7 +445,7 @@ function getPresetConfiguration<T extends Record<string, unknown>, B extends Rec
 	}
 }
 function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
-	ctx: Context<T, B>
+	ctx: Context<T, B>,
 ): string {
 	// Try to use existing request ID from headers
 	const existingId = ctx.req.headers.get("x-request-id") || ctx.req.headers.get("x-correlation-id");
@@ -466,7 +468,7 @@ function defaultRequestIdGenerator<T extends Record<string, unknown> = Record<st
  */
 function defaultRequestFormatter<T extends Record<string, unknown> = Record<string, unknown>, B extends Record<string, unknown> = Record<string, unknown>>(
 	ctx: Context<T, B>,
-	requestId: string
+	requestId: string,
 ): string {
 	const url = new URL(ctx.req.url);
 	return `${ctx.req.method} - ${ctx.clientIp} - ${url.pathname}${url.search}`;
@@ -479,7 +481,7 @@ function defaultResponseFormatter<T extends Record<string, unknown> = Record<str
 	ctx: Context<T, B>,
 	requestId: string,
 	duration: number,
-	statusCode: number
+	statusCode: number,
 ): string {
 	const url = new URL(ctx.req.url);
 	return `${ctx.req.method} - ${ctx.clientIp} - ${url.pathname}${url.search} - ${statusCode} - ${duration}ms`;
@@ -501,7 +503,7 @@ async function buildRequestMetadata<T extends Record<string, unknown>, B extends
 		logRequestBody: boolean;
 		maxBodyLength: number;
 		normalizedExcludeHeaders: string[];
-	}
+	},
 ): Promise<Record<string, unknown>> {
 	const url = new URL(ctx.req.url);
 
@@ -582,7 +584,7 @@ function buildResponseMetadata(
 		logDuration: boolean;
 		logResponseBody: boolean;
 		maxBodyLength: number;
-	}
+	},
 ): Record<string, unknown> {
 	const metadata: Record<string, unknown> = {
 		...baseMetadata,
@@ -603,7 +605,7 @@ function buildResponseMetadata(
  */
 function getMetadata<T extends Record<string, unknown>, B extends Record<string, unknown>>(
 	metadata: Record<string, unknown> | ((ctx: Context<T, B>) => Record<string, unknown>) | undefined,
-	ctx: Context<T, B>
+	ctx: Context<T, B>,
 ): Record<string, unknown> {
 	if (!metadata) return {};
 	if (typeof metadata === "function") return metadata(ctx);
@@ -640,7 +642,7 @@ export function createWebLogger(
 			facility?: number;
 			appName?: string;
 		};
-	} = {}
+	} = {},
 ): Logger {
 	const { level = Levels.INFO, console: enableConsole = true } = options;
 	const transports = [];

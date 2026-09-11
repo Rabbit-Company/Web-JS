@@ -15,7 +15,7 @@ describe("Basic Auth Middleware", () => {
 				validate: async (username, password) => {
 					return username === "admin" && password === "secret";
 				},
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("Protected"));
 
@@ -32,7 +32,7 @@ describe("Basic Auth Middleware", () => {
 				validate: async (username, password) => {
 					return username === "admin" && password === "secret";
 				},
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("Protected"));
 
@@ -52,7 +52,7 @@ describe("Basic Auth Middleware", () => {
 				validate: async (username, password) => {
 					return username === "admin" && password === "secret";
 				},
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.json({ user: ctx.get("user") }));
 
@@ -72,7 +72,7 @@ describe("Basic Auth Middleware", () => {
 			basicAuth({
 				validate: async () => false,
 				realm: "Admin Area",
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("Protected"));
 
@@ -87,7 +87,7 @@ describe("Basic Auth Middleware", () => {
 			basicAuth({
 				validate: async (username) => username === "admin",
 				contextKey: "auth" as any,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.json({ auth: ctx.get("auth" as any) }));
 
@@ -106,7 +106,7 @@ describe("Basic Auth Middleware", () => {
 		app.use(
 			basicAuth({
 				validate: async () => true,
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("Protected"));
 
@@ -119,6 +119,75 @@ describe("Basic Auth Middleware", () => {
 		expect(await res.text()).toBe("Invalid credentials");
 	});
 
+	describe("credential parsing", () => {
+		// Base64 of the given bytes, like a browser or curl would send
+		const basicHeader = (credentials: string, encoding: BufferEncoding = "utf8") => ({
+			Authorization: `Basic ${Buffer.from(credentials, encoding).toString("base64")}`,
+		});
+
+		function recordingApp(validate: (username: string, password: string) => boolean) {
+			const calls: [string, string][] = [];
+			app.use(
+				basicAuth({
+					validate: (username, password) => {
+						calls.push([username, password]);
+						return validate(username, password);
+					},
+				}),
+			);
+			app.get("/", (ctx) => ctx.text("Protected"));
+			return calls;
+		}
+
+		it("should keep colons in the password", async () => {
+			const calls = recordingApp((u, p) => u === "alice" && p === "pa:ss:word");
+
+			const res = await app.handle(new Request("http://localhost/", { headers: basicHeader("alice:pa:ss:word") }));
+
+			expect(res.status).toBe(200);
+			expect(calls).toEqual([["alice", "pa:ss:word"]]);
+		});
+
+		it("should reject credentials without a colon before calling validate", async () => {
+			// A lookup like this would accept an unknown user if password were undefined
+			const users: Record<string, string | undefined> = { admin: "secret" };
+			const calls = recordingApp((u, p) => users[u] === p);
+
+			const res = await app.handle(new Request("http://localhost/", { headers: basicHeader("nobody") }));
+
+			expect(res.status).toBe(400);
+			expect(await res.text()).toBe("Invalid credentials");
+			expect(calls).toEqual([]);
+		});
+
+		it("should allow an empty password", async () => {
+			const calls = recordingApp((u, p) => u === "guest" && p === "");
+
+			const res = await app.handle(new Request("http://localhost/", { headers: basicHeader("guest:") }));
+
+			expect(res.status).toBe(200);
+			expect(calls).toEqual([["guest", ""]]);
+		});
+
+		it("should decode UTF-8 credentials", async () => {
+			const calls = recordingApp((u, p) => u === "žiga" && p === "geslo-čšž");
+
+			const res = await app.handle(new Request("http://localhost/", { headers: basicHeader("žiga:geslo-čšž") }));
+
+			expect(res.status).toBe(200);
+			expect(calls).toEqual([["žiga", "geslo-čšž"]]);
+		});
+
+		it("should fall back to Latin-1 for credentials that aren't valid UTF-8", async () => {
+			const calls = recordingApp((u, p) => u === "jose" && p === "contraseña");
+
+			const res = await app.handle(new Request("http://localhost/", { headers: basicHeader("jose:contraseña", "latin1") }));
+
+			expect(res.status).toBe(200);
+			expect(calls).toEqual([["jose", "contraseña"]]);
+		});
+	});
+
 	it("should pass context to validate function", async () => {
 		app.use(
 			basicAuth({
@@ -126,7 +195,7 @@ describe("Basic Auth Middleware", () => {
 					// Check if specific header is present
 					return ctx.req.headers.get("X-Special") === "yes";
 				},
-			})
+			}),
 		);
 		app.get("/", (ctx) => ctx.text("Protected"));
 
@@ -157,7 +226,7 @@ describe("Basic Auth Middleware", () => {
 			basicAuth({
 				validate: () => false,
 				skip: (ctx) => ctx.req.headers.get("X-Skip-Auth") === "true",
-			})
+			}),
 		);
 		app.get("/", async (ctx) => {
 			return ctx.json({ success: true });
